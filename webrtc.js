@@ -23,6 +23,7 @@ class DeadDropConnection {
         this.onStatusChange = config.onStatusChange || (() => {});
         this.onIceGathered = config.onIceGathered || (() => {});
         this.onMessageReceived = config.onMessageReceived || (() => {});
+        this.onControlEvent = config.onControlEvent || (() => {});
         this.onFileIncoming = config.onFileIncoming || (() => {});
         this.onFileProgress = config.onFileProgress || (() => {});
         this.onFileCompleted = config.onFileCompleted || (() => {});
@@ -176,6 +177,8 @@ class DeadDropConnection {
                 const packet = JSON.parse(event.data);
                 if (packet.type === 'chat') {
                     this.onMessageReceived(packet.text, 'received', !!packet.selfDestruct);
+                } else if (packet.type === 'control') {
+                    this.onControlEvent(packet);
                 }
             } catch (err) {
                 console.warn("Could not parse packet:", err);
@@ -270,6 +273,16 @@ class DeadDropConnection {
             const packet = { type: 'chat', text: text, selfDestruct: selfDestruct };
             this.chatChannel.send(JSON.stringify(packet));
             this.onMessageReceived(text, 'sent', selfDestruct);
+        }
+    }
+
+    /**
+     * Send control instruction to peer
+     */
+    sendControl(action, value) {
+        if (this.chatChannel && this.chatChannel.readyState === 'open') {
+            const packet = { type: 'control', action: action, value: value };
+            this.chatChannel.send(JSON.stringify(packet));
         }
     }
 

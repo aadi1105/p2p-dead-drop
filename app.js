@@ -113,6 +113,11 @@ function initConnectionHandle() {
             synth.playMessage();
             appendChatMessage(text, side, selfDestruct);
         },
+        onControlEvent: (packet) => {
+            if (packet.action === 'toggle-burn') {
+                toggleBurnMode(true, packet.value);
+            }
+        },
         onFileIncoming: (filename, size) => {
             synth.playMessage();
             const modal = document.getElementById('incomingFileModal');
@@ -331,17 +336,32 @@ function appendChatMessage(text, side, selfDestruct) {
 }
 
 // Toggle self-destructing message mode
-function toggleBurnMode() {
+function toggleBurnMode(isRemoteTrigger = false, forcedValue = null) {
     synth.playMessage();
     const btn = document.getElementById('burnToggle');
-    isBurnActive = !isBurnActive;
+    
+    if (forcedValue !== null) {
+        isBurnActive = forcedValue;
+    } else {
+        isBurnActive = !isBurnActive;
+    }
     
     if (isBurnActive) {
         btn.innerText = "[ Burn: 10s ]";
         btn.className = "btn btn-sm btn-burn-active";
+        if (isRemoteTrigger) {
+            appendChatMessage("[System: Burn Mode activated by peer]", 'system');
+        } else if (p2p) {
+            p2p.sendControl('toggle-burn', true);
+        }
     } else {
         btn.innerText = "[ Burn: OFF ]";
         btn.className = "btn btn-sm btn-secondary";
+        if (isRemoteTrigger) {
+            appendChatMessage("[System: Burn Mode deactivated by peer]", 'system');
+        } else if (p2p) {
+            p2p.sendControl('toggle-burn', false);
+        }
     }
 }
 
@@ -363,20 +383,6 @@ function handleFileSelected(event) {
     }
 }
 
-function showProgressCard(filename) {
-    const card = document.getElementById('progressCard');
-    card.classList.remove('hidden');
-    document.getElementById('progressFileName').innerText = filename;
-    document.getElementById('progressPercent').innerText = '0%';
-    document.getElementById('progressBarFill').style.width = '0%';
-}
-
-function updateProgress(percent, statusText) {
-    document.getElementById('progressPercent').innerText = `${percent}%`;
-    document.getElementById('progressBarFill').style.width = `${percent}%`;
-    document.getElementById('progressState').innerText = statusText;
-}
-
 // Accept file triggers from prompt modal
 async function acceptStreamToDisk() {
     document.getElementById('incomingFileModal').classList.add('hidden');
@@ -390,6 +396,20 @@ async function acceptSaveToMemory() {
     showProgressCard(p2p.receivedMetadata.name);
     updateProgress(0, 'Initializing memory buffer...');
     await p2p.acceptFileTransfer(false);
+}
+
+function showProgressCard(filename) {
+    const card = document.getElementById('progressCard');
+    card.classList.remove('hidden');
+    document.getElementById('progressFileName').innerText = filename;
+    document.getElementById('progressPercent').innerText = '0%';
+    document.getElementById('progressBarFill').style.width = '0%';
+}
+
+function updateProgress(percent, statusText) {
+    document.getElementById('progressPercent').innerText = `${percent}%`;
+    document.getElementById('progressBarFill').style.width = `${percent}%`;
+    document.getElementById('progressState').innerText = statusText;
 }
 
 // ================================================================== //
