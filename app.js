@@ -2,13 +2,20 @@
  * DeadDrop P2P - UI Orchestration & Event Binding Layer
  * Exposes DOM bindings, handles screens transitions, and feeds user events
  * into the DeadDropConnection WebRTC backend.
- * Integrates Web Audio API Synthesizer and Self-Destructing Messages.
+ * Integrates Web Audio API Synthesizer, Self-Destructing Messages,
+ * a CLI Command Parser, and a File History Log.
  */
 
 // Global connection state
 let p2p = null;
 let isAudioCalling = false;
 let isBurnActive = false;
+
+// Session statistics
+let filesSentCount = 0;
+let filesReceivedCount = 0;
+let totalBytesSent = 0;
+let totalBytesReceived = 0;
 
 // ================================================================== //
 // WEB AUDIO SYNTHESIZER
@@ -116,6 +123,14 @@ function initConnectionHandle() {
         onControlEvent: (packet) => {
             if (packet.action === 'toggle-burn') {
                 toggleBurnMode(true, packet.value);
+            } else if (packet.action === 'ping') {
+                if (p2p) {
+                    p2p.sendControl('pong', packet.value);
+                }
+            } else if (packet.action === 'pong') {
+                const latency = Date.now() - packet.value;
+                synth.playMessage();
+                appendChatMessage(`>>> [System: Pong received. RTT latency: ${latency}ms]`, 'system');
             }
         },
         onFileIncoming: (filename, size) => {
@@ -139,19 +154,36 @@ function initConnectionHandle() {
             synth.playSuccessSweep();
             document.getElementById('incomingFileModal').classList.add('hidden');
 
-            if (isDirectSave) {
-                updateProgress(100, 'Saved directly to disk!');
-            } else if (blob) {
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = filename;
-                a.click();
-                updateProgress(100, 'Assembled & saved!');
+            let size = 0;
+            let direction = 'sent';
+
+            if (blob || isDirectSave) {
+                direction = 'received';
+                size = p2p.receivedMetadata ? p2p.receivedMetadata.size : 0;
+                filesReceivedCount++;
+                totalBytesReceived += size;
+
+                if (blob) {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    a.click();
+                    updateProgress(100, 'Assembled & saved!');
+                } else {
+                    updateProgress(100, 'Saved directly to disk!');
+                }
             } else {
+                direction = 'sent';
+                size = p2p.sendingFile ? p2p.sendingFile.size : 0;
+                filesSentCount++;
+                totalBytesSent += size;
                 updateProgress(100, 'Sent successfully!');
             }
             
+            // Add file entry to the File Log
+            logFileTransfer(filename, size, direction, isDirectSave);
+
             setTimeout(() => {
                 document.getElementById('progressCard').classList.add('hidden');
             }, 3500);
@@ -228,6 +260,14 @@ function resetUI() {
         burnBtn.innerText = "[ Burn: OFF ]";
         burnBtn.className = "btn btn-sm btn-secondary";
     }
+
+    // Reset File Log
+    document.getElementById('fileLogContainer').classList.add('hidden');
+    document.getElementById('fileLogList').innerHTML = '';
+    filesSentCount = 0;
+    filesReceivedCount = 0;
+    totalBytesSent = 0;
+    totalBytesReceived = 0;
     
     updateStatusUI('Disconnected', 'disconnected');
     showScreen('screenRole');
@@ -275,7 +315,7 @@ function handleOfferInput() {
 }
 
 // ================================================================== //
-// CHAT FUNCTIONALITY
+// CHAT & COMMAND FUNCTIONALITY
 // ================================================================== //
 function handleChatKeyPress(event) {
     if (event.key === 'Enter') {
@@ -286,10 +326,73 @@ function handleChatKeyPress(event) {
 function sendChatMessage() {
     const input = document.getElementById('chatInput');
     const text = input.value.trim();
-    if (!text || !p2p) return;
+    if (!text) return;
 
-    p2p.sendMessage(text, isBurnActive);
+    // Command parser routing
+    if (text.startsWith('/')) {
+        executeConsoleCommand(text);
+    } else {
+        if (!p2p) return;
+        p2p.sendMessage(text, isBurnActive);
+    }
     input.value = '';
+}
+
+function executeConsoleCommand(text) {
+    const parts = text.substring(1).trim().split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    
+    // Echo the command in local chat stream
+    appendChatMessage(`> ${text}`, 'sent');
+    
+    switch (cmd) {
+        case 'ping':
+            appendChatMessage("[System: Direct P2P ping request sent...]", 'system');
+            if (p2p && p2p.chatChannel && p2p.chatChannel.readyState === 'open') {
+                p2p.sendControl('ping', Date.now());
+            } else {
+                appendChatMessage("[System Error: Connection link inactive]", 'system');
+            }
+            break;
+            
+        case 'clear':
+            document.getElementById('chatMessages').innerHTML = '<div class="msg msg-system">Console feed cleared.</div>';
+            break;
+            
+        case 'status':
+            const role = p2p ? (p2p.isHost ? 'Host' : 'Joiner') : 'None';
+            const state = p2p && p2p.peerConnection ? p2p.peerConnection.iceConnectionState : 'Disconnected';
+            const voice = isAudioCalling ? 'Active' : 'Inactive';
+            const burn = isBurnActive ? 'Active (10s)' : 'Inactive';
+            
+            appendChatMessage(`[ System Link Report ]`, 'system');
+            appendChatMessage(`- Mode: ${role}`, 'system');
+            appendChatMessage(`- Connection: ${state.toUpperCase()}`, 'system');
+            appendChatMessage(`- Voice Line: ${voice}`, 'system');
+            appendChatMessage(`- Auto-Burn: ${burn}`, 'system');
+            appendChatMessage(`- Session Tx: ${filesSentCount} files (${formatBytes(totalBytesSent)})`, 'system');
+            appendChatMessage(`- Session Rx: ${filesReceivedCount} files (${formatBytes(totalBytesReceived)})`, 'system');
+            break;
+            
+        case 'burn':
+            toggleBurnMode();
+            break;
+            
+        case 'voice':
+            toggleAudioCall();
+            break;
+            
+        case 'help':
+        default:
+            appendChatMessage(`[ Console Commands ]`, 'system');
+            appendChatMessage(`/ping   - Measure round-trip P2P latency`, 'system');
+            appendChatMessage(`/status - Display secure link metadata`, 'system');
+            appendChatMessage(`/voice  - Toggle VoIP microphone stream`, 'system');
+            appendChatMessage(`/burn   - Toggle self-destruct mode`, 'system');
+            appendChatMessage(`/clear  - Flush console feed logs`, 'system');
+            appendChatMessage(`/help   - Display command instructions`, 'system');
+            break;
+    }
 }
 
 function appendChatMessage(text, side, selfDestruct) {
@@ -321,7 +424,6 @@ function appendChatMessage(text, side, selfDestruct) {
 
             if (secondsLeft <= 0) {
                 clearInterval(countdownInterval);
-                // Animate fade-out and delete from DOM
                 msgEl.style.opacity = '0';
                 msgEl.style.transition = 'opacity 0.4s ease-out';
                 setTimeout(() => {
@@ -410,6 +512,24 @@ function updateProgress(percent, statusText) {
     document.getElementById('progressPercent').innerText = `${percent}%`;
     document.getElementById('progressBarFill').style.width = `${percent}%`;
     document.getElementById('progressState').innerText = statusText;
+}
+
+// Append file entry to the File Log
+function logFileTransfer(filename, size, direction, isDirectSave) {
+    const list = document.getElementById('fileLogList');
+    const container = document.getElementById('fileLogContainer');
+    container.classList.remove('hidden');
+    
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const mode = isDirectSave ? 'Disk' : 'RAM';
+    const directionLabel = direction === 'sent' ? 'TX' : 'RX';
+    
+    const item = document.createElement('div');
+    item.style.color = direction === 'sent' ? 'var(--term-green)' : '#a3ffa3';
+    item.innerText = `[${time}] ${directionLabel}: ${filename} (${formatBytes(size)}) - ${mode}`;
+    
+    list.appendChild(item);
+    list.scrollTop = list.scrollHeight;
 }
 
 // ================================================================== //
