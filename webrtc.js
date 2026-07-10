@@ -3,7 +3,27 @@
  * Handles serverless signaling (base64 tokens), dual data channels (chat/file),
  * chunked file streaming with flow control backpressure,
  * and P2P Voice Chat (VoIP) audio streaming.
+ * Includes native Deflate compression for SDP tokens.
  */
+
+// Native browser compression helpers to shrink SDP codes under Discord's 2000char limit
+async function compressToken(str) {
+    const stream = new Blob([str]).stream();
+    const compressedStream = stream.pipeThrough(new CompressionStream('deflate'));
+    const buffer = await new Response(compressedStream).arrayBuffer();
+    return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+}
+
+async function decompressToken(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    const stream = new Blob([bytes]).stream();
+    const decompressedStream = stream.pipeThrough(new DecompressionStream('deflate'));
+    return await new Response(decompressedStream).text();
+}
 
 class DeadDropConnection {
     constructor(config = {}) {
@@ -104,10 +124,12 @@ class DeadDropConnection {
      * Handles setting up listeners for the ICE gathering phase.
      */
     bindIceEvents() {
-        this.peerConnection.onicegatheringstatechange = () => {
+        this.peerConnection.onicegatheringstatechange = async () => {
             if (this.peerConnection.iceGatheringState === 'complete') {
-                const base64SDP = btoa(JSON.stringify(this.peerConnection.localDescription));
-                this.onIceGathered(base64SDP);
+                // Compress the generated local token using native Gzip/Deflate
+                const token = JSON.stringify(this.peerConnection.localDescription);
+                const compressedToken = await compressToken(token);
+                this.onIceGathered(compressedToken);
             }
         };
     }
@@ -127,7 +149,8 @@ class DeadDropConnection {
      */
     async handleOffer(base64Offer) {
         try {
-            const sdp = JSON.parse(atob(base64Offer));
+            const decompressed = await decompressToken(base64Offer);
+            const sdp = JSON.parse(decompressed);
             this.onStatusChange('Puncturing NAT...', 'connecting');
 
             await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -145,7 +168,8 @@ class DeadDropConnection {
      */
     async handleAnswer(base64Answer) {
         try {
-            const sdp = JSON.parse(atob(base64Answer));
+            const decompressed = await decompressToken(base64Answer);
+            const sdp = JSON.parse(decompressed);
             await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
             this.onStatusChange('Connecting...', 'connecting');
         } catch (err) {
