@@ -7,6 +7,16 @@
 // Global connection handle
 let p2p = null;
 
+// Helper to format bytes cleanly
+function formatBytes(bytes, decimals = 2) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
 // Initialize connection callbacks
 function initConnectionHandle() {
     p2p = new DeadDropConnection({
@@ -32,21 +42,39 @@ function initConnectionHandle() {
         onMessageReceived: (text, side) => {
             appendChatMessage(text, side);
         },
-        onFileMetadata: (filename, size) => {
-            showProgressCard(filename);
+        onFileIncoming: (filename, size) => {
+            // Display the incoming file approval panel
+            const modal = document.getElementById('incomingFileModal');
+            document.getElementById('incomingFileName').innerText = filename;
+            document.getElementById('incomingFileSize').innerText = formatBytes(size);
+            modal.classList.remove('hidden');
+
+            // Hide "Stream to Disk" button if browser doesn't support the File System Access API
+            const streamBtn = document.getElementById('acceptStreamBtn');
+            if (!window.showSaveFilePicker) {
+                streamBtn.classList.add('hidden');
+            } else {
+                streamBtn.classList.remove('hidden');
+            }
         },
         onFileProgress: (percent, action) => {
-            updateProgress(percent, action === 'sending' ? 'Sending...' : 'Receiving...');
+            updateProgress(percent, action === 'sending' ? 'Uploading...' : 'Downloading...');
         },
-        onFileCompleted: (blob, filename) => {
-            if (blob) {
-                // If blob exists, we are the receiver
+        onFileCompleted: (blob, filename, isDirectSave) => {
+            // Hide incoming dialog if open
+            document.getElementById('incomingFileModal').classList.add('hidden');
+
+            if (isDirectSave) {
+                // Already saved direct to disk!
+                updateProgress(100, 'Saved directly to disk!');
+            } else if (blob) {
+                // Fallback in-memory assembly: Trigger automatic browser download
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = filename;
                 a.click();
-                updateProgress(100, 'Downloaded!');
+                updateProgress(100, 'Assembled in memory & saved!');
             } else {
                 // We are the sender
                 updateProgress(100, 'Sent successfully!');
@@ -54,7 +82,7 @@ function initConnectionHandle() {
             
             setTimeout(() => {
                 document.getElementById('progressCard').classList.add('hidden');
-            }, 3000);
+            }, 3500);
         }
     });
 }
@@ -102,6 +130,8 @@ function resetUI() {
     document.getElementById('joinResponseStep').classList.add('hidden');
     document.getElementById('connectBtn').disabled = true;
     document.getElementById('chatMessages').innerHTML = '<div class="msg msg-system">Peer connection established. Message history is private and locally cached.</div>';
+    document.getElementById('incomingFileModal').classList.add('hidden');
+    document.getElementById('progressCard').classList.add('hidden');
     
     updateStatusUI('Disconnected', 'disconnected');
     showScreen('screenRole');
@@ -206,6 +236,25 @@ function updateProgress(percent, statusText) {
     document.getElementById('progressBarFill').style.width = `${percent}%`;
     document.getElementById('progressState').innerText = statusText;
 }
+
+// Accept file triggers from prompt modal
+async function acceptStreamToDisk() {
+    document.getElementById('incomingFileModal').classList.add('hidden');
+    showProgressCard(p2p.receivedMetadata.name);
+    updateProgress(0, 'Initializing disk write...');
+    await p2p.acceptFileTransfer(true);
+}
+
+async function acceptSaveToMemory() {
+    document.getElementById('incomingFileModal').classList.add('hidden');
+    showProgressCard(p2p.receivedMetadata.name);
+    updateProgress(0, 'Initializing memory buffer...');
+    await p2p.acceptFileTransfer(false);
+}
+
+// Wire buttons
+document.getElementById('acceptStreamBtn').addEventListener('click', acceptStreamToDisk);
+document.getElementById('acceptMemoryBtn').addEventListener('click', acceptSaveToMemory);
 
 // Drag & Drop event bindings
 const dropzone = document.getElementById('dropzone');

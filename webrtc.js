@@ -2,11 +2,11 @@
  * DeadDrop P2P - WebRTC Connection & Streaming Layer
  * Handles serverless signaling (base64 tokens), dual data channels (chat/file),
  * and chunked file streaming with flow control backpressure.
+ * Supports direct-to-disk file streaming via File System Access API.
  */
 
 class DeadDropConnection {
     constructor(config = {}) {
-        // Public Google STUN servers for NAT hole-punching
         this.rtcConfig = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -23,16 +23,20 @@ class DeadDropConnection {
         this.onStatusChange = config.onStatusChange || (() => {});
         this.onIceGathered = config.onIceGathered || (() => {});
         this.onMessageReceived = config.onMessageReceived || (() => {});
-        this.onFileMetadata = config.onFileMetadata || (() => {});
+        this.onFileIncoming = config.onFileIncoming || (() => {});
         this.onFileProgress = config.onFileProgress || (() => {});
         this.onFileCompleted = config.onFileCompleted || (() => {});
 
-        // File transfer stats
+        // File transfer states
         this.chunkSize = 16384; // 16KB blocks
         this.fileReader = new FileReader();
+        this.sendingFile = null;
+        this.sendOffset = 0;
+
         this.receivedMetadata = null;
         this.receivedChunks = [];
         this.receivedSize = 0;
+        this.fileWritableStream = null;
     }
 
     /**
@@ -44,7 +48,6 @@ class DeadDropConnection {
 
         this.peerConnection = new RTCPeerConnection(this.rtcConfig);
 
-        // Host opens the data channels explicitly
         this.chatChannel = this.peerConnection.createDataChannel("chat");
         this.fileChannel = this.peerConnection.createDataChannel("file");
 
@@ -70,7 +73,6 @@ class DeadDropConnection {
 
         this.peerConnection = new RTCPeerConnection(this.rtcConfig);
 
-        // Joiner listens for incoming data channels created by Host
         this.peerConnection.ondatachannel = event => {
             const channel = event.channel;
             if (channel.label === "chat") {
@@ -91,7 +93,6 @@ class DeadDropConnection {
     bindIceEvents() {
         this.peerConnection.onicegatheringstatechange = () => {
             if (this.peerConnection.iceGatheringState === 'complete') {
-                // Compile the description (which includes gathered ICE candidates) into base64
                 const base64SDP = btoa(JSON.stringify(this.peerConnection.localDescription));
                 this.onIceGathered(base64SDP);
             }
@@ -166,43 +167,88 @@ class DeadDropConnection {
     bindFileChannelEvents(channel) {
         channel.binaryType = "arraybuffer";
 
-        channel.onmessage = event => {
+        channel.onmessage = async event => {
             const data = event.data;
 
-            // JSON strings are metadata packets
+            // 1. JSON strings are metadata or control packets
             if (typeof data === "string") {
                 try {
-                    const meta = JSON.parse(data);
-                    if (meta.type === "file-metadata") {
-                        this.receivedMetadata = meta;
-                        this.receivedChunks = [];
+                    const packet = JSON.parse(data);
+                    
+                    if (packet.type === "file-metadata") {
+                        // Received file info from sender. Prompt user to accept.
+                        this.receivedMetadata = packet;
                         this.receivedSize = 0;
-                        this.onFileMetadata(meta.name, meta.size);
+                        this.onFileIncoming(packet.name, packet.size);
+                    } 
+                    else if (packet.type === "file-ready") {
+                        // Receiver is ready to stream. Start transmission.
+                        this.startFileStream();
                     }
                 } catch (err) {
-                    console.error("Error parsing file metadata:", err);
+                    console.error("Error parsing file channel string:", err);
                 }
             } 
-            // ArrayBuffer represents binary chunks of file
+            // 2. ArrayBuffer represents binary chunks of file
             else {
                 if (!this.receivedMetadata) return;
 
-                this.receivedChunks.push(data);
-                this.receivedSize += data.byteLength;
+                if (this.fileWritableStream) {
+                    // Stream directly to disk (async write, browser handles queuing)
+                    this.fileWritableStream.write(data);
+                } else {
+                    // Fallback: Buffer in RAM
+                    this.receivedChunks.push(data);
+                }
 
+                this.receivedSize += data.byteLength;
                 const percent = Math.floor((this.receivedSize / this.receivedMetadata.size) * 100);
                 this.onFileProgress(percent, 'receiving');
 
+                // Check completion
                 if (this.receivedSize === this.receivedMetadata.size) {
-                    const blob = new Blob(this.receivedChunks);
-                    this.onFileCompleted(blob, this.receivedMetadata.name);
-
-                    // Clear state
+                    if (this.fileWritableStream) {
+                        // Flush and close the file stream
+                        await this.fileWritableStream.close();
+                        this.fileWritableStream = null;
+                        this.onFileCompleted(null, this.receivedMetadata.name, true);
+                    } else {
+                        // Assemble the memory buffer
+                        const blob = new Blob(this.receivedChunks);
+                        this.onFileCompleted(blob, this.receivedMetadata.name, false);
+                        this.receivedChunks = [];
+                    }
                     this.receivedMetadata = null;
-                    this.receivedChunks = [];
                 }
             }
         };
+    }
+
+    /**
+     * User accepted incoming file. Setup receiver storage mode and notify sender.
+     * @param {boolean} useFileSystemAccess - True to use showSaveFilePicker
+     */
+    async acceptFileTransfer(useFileSystemAccess) {
+        if (!this.receivedMetadata) return;
+
+        if (useFileSystemAccess && window.showSaveFilePicker) {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: this.receivedMetadata.name
+                });
+                this.fileWritableStream = await handle.createWritable();
+            } catch (err) {
+                console.warn("User cancelled file picker or write denied, falling back to memory:", err);
+                this.fileWritableStream = null;
+                this.receivedChunks = [];
+            }
+        } else {
+            this.fileWritableStream = null;
+            this.receivedChunks = [];
+        }
+
+        // Send handshake signal to sender that we are ready to receive binary chunks
+        this.fileChannel.send(JSON.stringify({ type: "file-ready" }));
     }
 
     /**
@@ -217,15 +263,16 @@ class DeadDropConnection {
     }
 
     /**
-     * Streams a file through WebRTC with backpressure buffer checks.
+     * Initiates the file sending process by sharing metadata.
+     * @param {File} file 
      */
     sendFile(file) {
         if (!this.fileChannel || this.fileChannel.readyState !== 'open') return;
 
-        let offset = 0;
-        this.fileChannel.bufferedAmountLowThreshold = 65536; // 64KB threshold
+        this.sendingFile = file;
+        this.sendOffset = 0;
 
-        // Send metadata packet first
+        // Step 1: Send metadata packet.
         const meta = {
             type: "file-metadata",
             name: file.name,
@@ -233,19 +280,29 @@ class DeadDropConnection {
             mime: file.type
         };
         this.fileChannel.send(JSON.stringify(meta));
-        this.onFileMetadata(file.name, file.size);
+        this.onFileProgress(0, 'sending');
+        
+        // Wait for receiver to trigger "file-ready" before streaming
+    }
+
+    /**
+     * Performs chunked file stream with flow control.
+     */
+    startFileStream() {
+        this.fileChannel.bufferedAmountLowThreshold = 65536; // 64KB threshold
 
         this.fileReader.onload = event => {
             this.fileChannel.send(event.target.result);
-            offset += event.target.result.byteLength;
+            this.sendOffset += event.target.result.byteLength;
 
-            const percent = Math.floor((offset / file.size) * 100);
+            const percent = Math.floor((this.sendOffset / this.sendingFile.size) * 100);
             this.onFileProgress(percent, 'sending');
 
-            if (offset < file.size) {
+            if (this.sendOffset < this.sendingFile.size) {
                 streamNext();
             } else {
-                this.onFileCompleted(null, file.name);
+                this.onFileCompleted(null, this.sendingFile.name, false);
+                this.sendingFile = null;
             }
         };
 
@@ -259,7 +316,7 @@ class DeadDropConnection {
                 return;
             }
 
-            const slice = file.slice(offset, offset + this.chunkSize);
+            const slice = this.sendingFile.slice(this.sendOffset, this.sendOffset + this.chunkSize);
             this.fileReader.readAsArrayBuffer(slice);
         };
 
@@ -276,5 +333,8 @@ class DeadDropConnection {
         this.peerConnection = null;
         this.chatChannel = null;
         this.fileChannel = null;
+        if (this.fileWritableStream) {
+            this.fileWritableStream.close().catch(() => {});
+        }
     }
 }

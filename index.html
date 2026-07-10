@@ -125,6 +125,21 @@
                                 <input type="file" id="fileInput" class="hidden" onchange="handleFileSelected(event)">
                             </div>
                             
+                            <!-- Incoming File Prompt Modal -->
+                            <div class="progress-card hidden" id="incomingFileModal" style="border-color: var(--accent-blue);">
+                                <div class="progress-info">
+                                    <span style="font-weight: 600; color: var(--accent-blue);">Incoming File Request:</span>
+                                </div>
+                                <div class="progress-info" style="margin-top: 6px;">
+                                    <span id="incomingFileName" style="font-weight: 500;">filename.txt</span>
+                                    <span id="incomingFileSize">0 KB</span>
+                                </div>
+                                <div style="margin-top: 14px; display: flex; gap: 8px;">
+                                    <button class="btn btn-sm" id="acceptStreamBtn">📥 Stream to Disk</button>
+                                    <button class="btn btn-sm btn-secondary" id="acceptMemoryBtn">💾 Save in Memory</button>
+                                </div>
+                            </div>
+                            
                             <!-- Progress card for active transfers -->
                             <div class="progress-card hidden" id="progressCard">
                                 <div class="progress-info">
