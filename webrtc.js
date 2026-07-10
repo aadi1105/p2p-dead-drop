@@ -1,8 +1,8 @@
 /**
  * DeadDrop P2P - WebRTC Connection & Streaming Layer
  * Handles serverless signaling (base64 tokens), dual data channels (chat/file),
- * and chunked file streaming with flow control backpressure.
- * Supports direct-to-disk file streaming via File System Access API.
+ * chunked file streaming with flow control backpressure,
+ * and P2P Voice Chat (VoIP) audio streaming.
  */
 
 class DeadDropConnection {
@@ -26,6 +26,7 @@ class DeadDropConnection {
         this.onFileIncoming = config.onFileIncoming || (() => {});
         this.onFileProgress = config.onFileProgress || (() => {});
         this.onFileCompleted = config.onFileCompleted || (() => {});
+        this.onRemoteStream = config.onRemoteStream || (() => {});
 
         // File transfer states
         this.chunkSize = 16384; // 16KB blocks
@@ -37,6 +38,9 @@ class DeadDropConnection {
         this.receivedChunks = [];
         this.receivedSize = 0;
         this.fileWritableStream = null;
+
+        // Audio state
+        this.localStream = null;
     }
 
     /**
@@ -48,12 +52,16 @@ class DeadDropConnection {
 
         this.peerConnection = new RTCPeerConnection(this.rtcConfig);
 
+        // Pre-create audio transceiver for seamless voice call setup
+        this.peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+
         this.chatChannel = this.peerConnection.createDataChannel("chat");
         this.fileChannel = this.peerConnection.createDataChannel("file");
 
         this.bindChannelEvents(this.chatChannel);
         this.bindFileChannelEvents(this.fileChannel);
         this.bindIceEvents();
+        this.bindTrackEvents();
 
         try {
             const offer = await this.peerConnection.createOffer();
@@ -73,6 +81,9 @@ class DeadDropConnection {
 
         this.peerConnection = new RTCPeerConnection(this.rtcConfig);
 
+        // Pre-create audio transceiver on joiner side as well
+        this.peerConnection.addTransceiver('audio', { direction: 'sendrecv' });
+
         this.peerConnection.ondatachannel = event => {
             const channel = event.channel;
             if (channel.label === "chat") {
@@ -85,6 +96,7 @@ class DeadDropConnection {
         };
 
         this.bindIceEvents();
+        this.bindTrackEvents();
     }
 
     /**
@@ -96,6 +108,16 @@ class DeadDropConnection {
                 const base64SDP = btoa(JSON.stringify(this.peerConnection.localDescription));
                 this.onIceGathered(base64SDP);
             }
+        };
+    }
+
+    /**
+     * Binds media track receiver events.
+     */
+    bindTrackEvents() {
+        this.peerConnection.ontrack = event => {
+            const remoteStream = event.streams[0] || new MediaStream([event.track]);
+            this.onRemoteStream(remoteStream);
         };
     }
 
@@ -170,34 +192,28 @@ class DeadDropConnection {
         channel.onmessage = async event => {
             const data = event.data;
 
-            // 1. JSON strings are metadata or control packets
             if (typeof data === "string") {
                 try {
                     const packet = JSON.parse(data);
                     
                     if (packet.type === "file-metadata") {
-                        // Received file info from sender. Prompt user to accept.
                         this.receivedMetadata = packet;
                         this.receivedSize = 0;
                         this.onFileIncoming(packet.name, packet.size);
                     } 
                     else if (packet.type === "file-ready") {
-                        // Receiver is ready to stream. Start transmission.
                         this.startFileStream();
                     }
                 } catch (err) {
                     console.error("Error parsing file channel string:", err);
                 }
             } 
-            // 2. ArrayBuffer represents binary chunks of file
             else {
                 if (!this.receivedMetadata) return;
 
                 if (this.fileWritableStream) {
-                    // Stream directly to disk (async write, browser handles queuing)
                     this.fileWritableStream.write(data);
                 } else {
-                    // Fallback: Buffer in RAM
                     this.receivedChunks.push(data);
                 }
 
@@ -205,15 +221,12 @@ class DeadDropConnection {
                 const percent = Math.floor((this.receivedSize / this.receivedMetadata.size) * 100);
                 this.onFileProgress(percent, 'receiving');
 
-                // Check completion
                 if (this.receivedSize === this.receivedMetadata.size) {
                     if (this.fileWritableStream) {
-                        // Flush and close the file stream
                         await this.fileWritableStream.close();
                         this.fileWritableStream = null;
                         this.onFileCompleted(null, this.receivedMetadata.name, true);
                     } else {
-                        // Assemble the memory buffer
                         const blob = new Blob(this.receivedChunks);
                         this.onFileCompleted(blob, this.receivedMetadata.name, false);
                         this.receivedChunks = [];
@@ -226,7 +239,6 @@ class DeadDropConnection {
 
     /**
      * User accepted incoming file. Setup receiver storage mode and notify sender.
-     * @param {boolean} useFileSystemAccess - True to use showSaveFilePicker
      */
     async acceptFileTransfer(useFileSystemAccess) {
         if (!this.receivedMetadata) return;
@@ -247,7 +259,6 @@ class DeadDropConnection {
             this.receivedChunks = [];
         }
 
-        // Send handshake signal to sender that we are ready to receive binary chunks
         this.fileChannel.send(JSON.stringify({ type: "file-ready" }));
     }
 
@@ -264,7 +275,6 @@ class DeadDropConnection {
 
     /**
      * Initiates the file sending process by sharing metadata.
-     * @param {File} file 
      */
     sendFile(file) {
         if (!this.fileChannel || this.fileChannel.readyState !== 'open') return;
@@ -272,7 +282,6 @@ class DeadDropConnection {
         this.sendingFile = file;
         this.sendOffset = 0;
 
-        // Step 1: Send metadata packet.
         const meta = {
             type: "file-metadata",
             name: file.name,
@@ -281,8 +290,6 @@ class DeadDropConnection {
         };
         this.fileChannel.send(JSON.stringify(meta));
         this.onFileProgress(0, 'sending');
-        
-        // Wait for receiver to trigger "file-ready" before streaming
     }
 
     /**
@@ -307,7 +314,6 @@ class DeadDropConnection {
         };
 
         const streamNext = () => {
-            // Flow control: if WebRTC internal buffer is over 1MB, wait for it to clear
             if (this.fileChannel.bufferedAmount > 1048576) {
                 this.fileChannel.onbufferedamountlow = () => {
                     this.fileChannel.onbufferedamountlow = null;
@@ -324,9 +330,47 @@ class DeadDropConnection {
     }
 
     /**
+     * Starts microphone stream and replaces audio track on the peer connection sender.
+     */
+    async startAudioCall() {
+        try {
+            this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            
+            const track = this.localStream.getAudioTracks()[0];
+            const senders = this.peerConnection.getSenders();
+            const audioSender = senders.find(s => s.track === null || (s.track && s.track.kind === 'audio'));
+            
+            if (audioSender) {
+                await audioSender.replaceTrack(track);
+            }
+            return this.localStream;
+        } catch (err) {
+            console.error("Microphone capture failed:", err);
+            throw err;
+        }
+    }
+
+    /**
+     * Stops sending microphone track.
+     */
+    async stopAudioCall() {
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => track.stop());
+            this.localStream = null;
+        }
+
+        const senders = this.peerConnection.getSenders();
+        const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+        if (audioSender) {
+            await audioSender.replaceTrack(null);
+        }
+    }
+
+    /**
      * Safely closes the peer connection.
      */
     closeConnection() {
+        this.closeAudio();
         if (this.peerConnection) {
             this.peerConnection.close();
         }
@@ -336,5 +380,12 @@ class DeadDropConnection {
         if (this.fileWritableStream) {
             this.fileWritableStream.close().catch(() => {});
         }
+    }
+
+    closeAudio() {
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(t => t.stop());
+        }
+        this.localStream = null;
     }
 }

@@ -6,6 +6,7 @@
 
 // Global connection handle
 let p2p = null;
+let isAudioCalling = false;
 
 // Helper to format bytes cleanly
 function formatBytes(bytes, decimals = 2) {
@@ -43,13 +44,11 @@ function initConnectionHandle() {
             appendChatMessage(text, side);
         },
         onFileIncoming: (filename, size) => {
-            // Display the incoming file approval panel
             const modal = document.getElementById('incomingFileModal');
             document.getElementById('incomingFileName').innerText = filename;
             document.getElementById('incomingFileSize').innerText = formatBytes(size);
             modal.classList.remove('hidden');
 
-            // Hide "Stream to Disk" button if browser doesn't support the File System Access API
             const streamBtn = document.getElementById('acceptStreamBtn');
             if (!window.showSaveFilePicker) {
                 streamBtn.classList.add('hidden');
@@ -61,28 +60,31 @@ function initConnectionHandle() {
             updateProgress(percent, action === 'sending' ? 'Uploading...' : 'Downloading...');
         },
         onFileCompleted: (blob, filename, isDirectSave) => {
-            // Hide incoming dialog if open
             document.getElementById('incomingFileModal').classList.add('hidden');
 
             if (isDirectSave) {
-                // Already saved direct to disk!
                 updateProgress(100, 'Saved directly to disk!');
             } else if (blob) {
-                // Fallback in-memory assembly: Trigger automatic browser download
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = filename;
                 a.click();
-                updateProgress(100, 'Assembled in memory & saved!');
+                updateProgress(100, 'Assembled & saved!');
             } else {
-                // We are the sender
                 updateProgress(100, 'Sent successfully!');
             }
             
             setTimeout(() => {
                 document.getElementById('progressCard').classList.add('hidden');
             }, 3500);
+        },
+        onRemoteStream: (stream) => {
+            // Bind remote audio stream to audio element
+            const audio = document.getElementById('remoteAudio');
+            audio.srcObject = stream;
+            audio.play().catch(err => console.error("Audio autoplay blocked by browser policy:", err));
+            appendChatMessage("[System: Secure P2P voice channel opened]", 'system');
         }
     });
 }
@@ -129,9 +131,17 @@ function resetUI() {
     document.getElementById('joinAnswerText').value = '';
     document.getElementById('joinResponseStep').classList.add('hidden');
     document.getElementById('connectBtn').disabled = true;
-    document.getElementById('chatMessages').innerHTML = '<div class="msg msg-system">Peer connection established. Message history is private and locally cached.</div>';
+    document.getElementById('chatMessages').innerHTML = '<div class="msg msg-system">Link established. Network traffic is end-to-end encrypted.</div>';
     document.getElementById('incomingFileModal').classList.add('hidden');
     document.getElementById('progressCard').classList.add('hidden');
+    
+    // Clear audio UI elements
+    const audioCallBtn = document.getElementById('audioCallBtn');
+    if (audioCallBtn) {
+        audioCallBtn.innerText = "[ Start Voice Call ]";
+    }
+    isAudioCalling = false;
+    document.getElementById('remoteAudio').srcObject = null;
     
     updateStatusUI('Disconnected', 'disconnected');
     showScreen('screenRole');
@@ -250,6 +260,31 @@ async function acceptSaveToMemory() {
     showProgressCard(p2p.receivedMetadata.name);
     updateProgress(0, 'Initializing memory buffer...');
     await p2p.acceptFileTransfer(false);
+}
+
+// ================================================================== //
+// VOICE CALL FUNCTIONALITY
+// ================================================================== //
+async function toggleAudioCall() {
+    const btn = document.getElementById('audioCallBtn');
+    
+    if (!isAudioCalling) {
+        btn.innerText = "[ Initializing mic... ]";
+        try {
+            await p2p.startAudioCall();
+            isAudioCalling = true;
+            btn.innerText = "[ Disconnect Voice ]";
+            appendChatMessage("[System: Your microphone is now live on the connection]", 'system');
+        } catch (err) {
+            btn.innerText = "[ Start Voice Call ]";
+            alert("Could not access microphone: " + err.message);
+        }
+    } else {
+        await p2p.stopAudioCall();
+        isAudioCalling = false;
+        btn.innerText = "[ Start Voice Call ]";
+        appendChatMessage("[System: Your microphone has been muted/disconnected]", 'system');
+    }
 }
 
 // Wire buttons
