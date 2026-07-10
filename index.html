@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeadDrop - Serverless P2P Chat & File Share</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
+    
+    <!-- External stylesheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="blob blob-blue"></div>
+    <div class="blob blob-purple"></div>
+
+    <div class="wrapper">
+        <div class="glass-card">
+            
+            <header>
+                <h1>DeadDrop P2P</h1>
+                <p>Serverless, encrypted messaging & direct file streaming</p>
+            </header>
+
+            <div class="status-wrapper">
+                <div class="status-badge">
+                    <div id="statusDot" class="status-dot"></div>
+                    <span id="statusText">State: Disconnected</span>
+                </div>
+            </div>
+
+            <!-- Toast alert -->
+            <div id="toast" class="toast">Copied to clipboard!</div>
+
+            <!-- SCREEN 1: Role Selection -->
+            <div id="screenRole" class="screen active">
+                <div class="choice-grid">
+                    <div class="choice-btn" onclick="initHost()">
+                        <div class="choice-icon">📡</div>
+                        <div class="choice-title">Host a Room</div>
+                        <div class="choice-desc">Generate a connection code and wait for a peer to connect to you.</div>
+                    </div>
+                    <div class="choice-btn" onclick="initJoin()">
+                        <div class="choice-icon">🤝</div>
+                        <div class="choice-title">Join a Room</div>
+                        <div class="choice-desc">Paste a host's connection code to establish a link.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SCREEN 2: Host Connection Setup -->
+            <div id="screenHost" class="screen">
+                <div class="step-container">
+                    <div class="section-title">1. Your Connection Code</div>
+                    <div class="textarea-wrapper">
+                        <textarea id="hostOfferText" readonly onclick="this.select()"></textarea>
+                        <button class="copy-overlay-btn" onclick="copyToken('hostOfferText')">Copy</button>
+                    </div>
+                    <p class="choice-desc" style="margin-top: -6px;">Share this code with your friend. Waiting for them to accept...</p>
+                </div>
+
+                <div class="step-container">
+                    <div class="section-title">2. Paste Friend's Response</div>
+                    <div class="textarea-wrapper">
+                        <textarea id="hostAnswerText" placeholder="Paste response token here..."></textarea>
+                    </div>
+                    <button class="btn" id="connectBtn" onclick="hostConnect()" disabled>Connect</button>
+                </div>
+
+                <button class="btn btn-secondary btn-sm back-btn" onclick="resetState()">← Back</button>
+            </div>
+
+            <!-- SCREEN 3: Join Connection Setup -->
+            <div id="screenJoin" class="screen">
+                <div class="step-container">
+                    <div class="section-title">1. Paste Host Code</div>
+                    <textarea id="joinOfferText" placeholder="Paste host connection token here..." oninput="handleOfferInput()"></textarea>
+                </div>
+
+                <div class="step-container hidden" id="joinResponseStep">
+                    <div class="section-title">2. Your Response Code</div>
+                    <div class="textarea-wrapper">
+                        <textarea id="joinAnswerText" readonly onclick="this.select()"></textarea>
+                        <button class="copy-overlay-btn" onclick="copyToken('joinAnswerText')">Copy</button>
+                    </div>
+                    <p class="choice-desc" style="margin-top: -6px;">Send this response code back to the Host to complete the handshake.</p>
+                </div>
+
+                <button class="btn btn-secondary btn-sm back-btn" onclick="resetState()">← Back</button>
+            </div>
+
+            <!-- SCREEN 4: Active P2P Session Workspace -->
+            <div id="screenWorkspace" class="screen">
+                <div class="workspace-grid">
+                    
+                    <!-- P2P Chat Pane -->
+                    <div class="pane">
+                        <div class="chat-header">
+                            <span>Direct Chat</span>
+                            <span id="chatPeerName" style="color: var(--accent-blue); font-size: 0.85rem;">Peer Connected</span>
+                        </div>
+                        <div class="chat-messages" id="chatMessages">
+                            <div class="msg msg-system">Peer connection established. Message history is private and locally cached.</div>
+                        </div>
+                        <div class="chat-input-row">
+                            <input type="text" id="chatInput" placeholder="Write a message..." onkeypress="handleChatKeyPress(event)">
+                            <button class="btn btn-sm" onclick="sendChatMessage()">Send</button>
+                        </div>
+                    </div>
+
+                    <!-- P2P File Drop Pane -->
+                    <div class="pane">
+                        <div class="chat-header">
+                            <span>File Stream Drop</span>
+                        </div>
+                        <div class="dropzone-container">
+                            <div class="dropzone" id="dropzone" onclick="triggerFileSelect()">
+                                <div class="dropzone-icon">📤</div>
+                                <div class="dropzone-text">Drag & drop files or click to choose</div>
+                                <div class="dropzone-subtext">Direct browser-to-browser streaming. Files do not touch any server.</div>
+                                <input type="file" id="fileInput" class="hidden" onchange="handleFileSelected(event)">
+                            </div>
+                            
+                            <!-- Progress card for active transfers -->
+                            <div class="progress-card hidden" id="progressCard">
+                                <div class="progress-info">
+                                    <span id="progressFileName">file.zip</span>
+                                    <span id="progressPercent">0%</span>
+                                </div>
+                                <div class="progress-bar-bg">
+                                    <div class="progress-bar-fill" id="progressBarFill"></div>
+                                </div>
+                                <div class="progress-info" style="margin-top: 6px; font-size: 0.75rem;">
+                                    <span id="progressRate">0 MB/s</span>
+                                    <span id="progressState">Streaming...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Application scripts -->
+    <script src="webrtc.js" defer></script>
+    <script src="app.js" defer></script>
+</body>
+</html>
