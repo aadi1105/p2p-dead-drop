@@ -2,11 +2,79 @@
  * DeadDrop P2P - UI Orchestration & Event Binding Layer
  * Exposes DOM bindings, handles screens transitions, and feeds user events
  * into the DeadDropConnection WebRTC backend.
+ * Integrates Web Audio API Synthesizer and Self-Destructing Messages.
  */
 
-// Global connection handle
+// Global connection state
 let p2p = null;
 let isAudioCalling = false;
+let isBurnActive = false;
+
+// ================================================================== //
+// WEB AUDIO SYNTHESIZER
+// ================================================================== //
+const synth = {
+    ctx: null,
+    init() {
+        if (!this.ctx) {
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    },
+    playTone(freq, type, duration, gainStart) {
+        try {
+            this.init();
+            if (this.ctx.state === 'suspended') {
+                this.ctx.resume();
+            }
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            
+            osc.type = type || 'sine';
+            osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+            
+            gain.gain.setValueAtTime(gainStart || 0.1, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + duration);
+            
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            
+            osc.start();
+            osc.stop(this.ctx.currentTime + duration);
+        } catch (e) {
+            console.warn("Synth playback failed:", e);
+        }
+    },
+    playConnect() {
+        this.playTone(523.25, 'sine', 0.15); // C5
+        setTimeout(() => this.playTone(659.25, 'sine', 0.15), 100); // E5
+        setTimeout(() => this.playTone(783.99, 'sine', 0.25), 200); // G5
+    },
+    playMessage() {
+        this.playTone(880, 'triangle', 0.04, 0.05);
+        setTimeout(() => this.playTone(880, 'triangle', 0.04, 0.05), 60);
+    },
+    playSuccessSweep() {
+        try {
+            this.init();
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(440, this.ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(880, this.ctx.currentTime + 0.35);
+            gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + 0.35);
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+            osc.start();
+            osc.stop(this.ctx.currentTime + 0.35);
+        } catch (e) {
+            console.warn("Synth success sweep failed:", e);
+        }
+    },
+    playTick() {
+        this.playTone(600, 'triangle', 0.02, 0.04);
+    }
+};
 
 // Helper to format bytes cleanly
 function formatBytes(bytes, decimals = 2) {
@@ -24,6 +92,7 @@ function initConnectionHandle() {
         onStatusChange: (text, type) => {
             updateStatusUI(text, type);
             if (type === 'connected') {
+                synth.playConnect();
                 showScreen('screenWorkspace');
             } else if (type === 'disconnected') {
                 resetUI();
@@ -40,10 +109,12 @@ function initConnectionHandle() {
                 updateStatusUI('Handshake Pending', 'connecting');
             }
         },
-        onMessageReceived: (text, side) => {
-            appendChatMessage(text, side);
+        onMessageReceived: (text, side, selfDestruct) => {
+            synth.playMessage();
+            appendChatMessage(text, side, selfDestruct);
         },
         onFileIncoming: (filename, size) => {
+            synth.playMessage();
             const modal = document.getElementById('incomingFileModal');
             document.getElementById('incomingFileName').innerText = filename;
             document.getElementById('incomingFileSize').innerText = formatBytes(size);
@@ -60,6 +131,7 @@ function initConnectionHandle() {
             updateProgress(percent, action === 'sending' ? 'Uploading...' : 'Downloading...');
         },
         onFileCompleted: (blob, filename, isDirectSave) => {
+            synth.playSuccessSweep();
             document.getElementById('incomingFileModal').classList.add('hidden');
 
             if (isDirectSave) {
@@ -80,10 +152,10 @@ function initConnectionHandle() {
             }, 3500);
         },
         onRemoteStream: (stream) => {
-            // Bind remote audio stream to audio element
             const audio = document.getElementById('remoteAudio');
             audio.srcObject = stream;
             audio.play().catch(err => console.error("Audio autoplay blocked by browser policy:", err));
+            synth.playConnect();
             appendChatMessage("[System: Secure P2P voice channel opened]", 'system');
         }
     });
@@ -112,6 +184,7 @@ function updateStatusUI(text, type) {
 function showToast() {
     const toast = document.getElementById('toast');
     toast.classList.add('show');
+    synth.playMessage();
     setTimeout(() => {
         toast.classList.remove('show');
     }, 2000);
@@ -142,6 +215,14 @@ function resetUI() {
     }
     isAudioCalling = false;
     document.getElementById('remoteAudio').srcObject = null;
+
+    // Reset Self-Destruct
+    isBurnActive = false;
+    const burnBtn = document.getElementById('burnToggle');
+    if (burnBtn) {
+        burnBtn.innerText = "[ Burn: OFF ]";
+        burnBtn.className = "btn btn-sm btn-secondary";
+    }
     
     updateStatusUI('Disconnected', 'disconnected');
     showScreen('screenRole');
@@ -202,17 +283,66 @@ function sendChatMessage() {
     const text = input.value.trim();
     if (!text || !p2p) return;
 
-    p2p.sendMessage(text);
+    p2p.sendMessage(text, isBurnActive);
     input.value = '';
 }
 
-function appendChatMessage(text, side) {
+function appendChatMessage(text, side, selfDestruct) {
     const chatMessages = document.getElementById('chatMessages');
     const msgEl = document.createElement('div');
     msgEl.className = `msg msg-${side}`;
-    msgEl.innerText = text;
+    
+    // Add raw text
+    const textSpan = document.createElement('span');
+    textSpan.innerText = text;
+    msgEl.appendChild(textSpan);
+
+    // Apply self-destruct countdown timer
+    if (selfDestruct && side !== 'system') {
+        let secondsLeft = 10;
+        const timerSpan = document.createElement('span');
+        timerSpan.className = 'burn-timer';
+        timerSpan.innerText = ` [${secondsLeft}s]`;
+        msgEl.appendChild(timerSpan);
+
+        const countdownInterval = setInterval(() => {
+            secondsLeft--;
+            timerSpan.innerText = ` [${secondsLeft}s]`;
+            
+            // Play countdown ticks for the final 3 seconds
+            if (secondsLeft <= 3 && secondsLeft > 0) {
+                synth.playTick();
+            }
+
+            if (secondsLeft <= 0) {
+                clearInterval(countdownInterval);
+                // Animate fade-out and delete from DOM
+                msgEl.style.opacity = '0';
+                msgEl.style.transition = 'opacity 0.4s ease-out';
+                setTimeout(() => {
+                    msgEl.remove();
+                }, 400);
+            }
+        }, 1000);
+    }
+
     chatMessages.appendChild(msgEl);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Toggle self-destructing message mode
+function toggleBurnMode() {
+    synth.playMessage();
+    const btn = document.getElementById('burnToggle');
+    isBurnActive = !isBurnActive;
+    
+    if (isBurnActive) {
+        btn.innerText = "[ Burn: 10s ]";
+        btn.className = "btn btn-sm btn-burn-active";
+    } else {
+        btn.innerText = "[ Burn: OFF ]";
+        btn.className = "btn btn-sm btn-secondary";
+    }
 }
 
 // ================================================================== //

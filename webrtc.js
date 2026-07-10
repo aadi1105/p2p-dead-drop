@@ -175,7 +175,7 @@ class DeadDropConnection {
             try {
                 const packet = JSON.parse(event.data);
                 if (packet.type === 'chat') {
-                    this.onMessageReceived(packet.text, 'received');
+                    this.onMessageReceived(packet.text, 'received', !!packet.selfDestruct);
                 }
             } catch (err) {
                 console.warn("Could not parse packet:", err);
@@ -265,11 +265,11 @@ class DeadDropConnection {
     /**
      * Send chat message.
      */
-    sendMessage(text) {
+    sendMessage(text, selfDestruct = false) {
         if (this.chatChannel && this.chatChannel.readyState === 'open') {
-            const packet = { type: 'chat', text: text };
+            const packet = { type: 'chat', text: text, selfDestruct: selfDestruct };
             this.chatChannel.send(JSON.stringify(packet));
-            this.onMessageReceived(text, 'sent');
+            this.onMessageReceived(text, 'sent', selfDestruct);
         }
     }
 

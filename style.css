@@ -487,6 +487,27 @@ textarea:focus {
     opacity: 1;
 }
 
+.burn-timer {
+    color: var(--danger-red);
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-shadow: 0 0 4px var(--danger-glow);
+    margin-left: 8px;
+    letter-spacing: 0.5px;
+}
+
+.btn-burn-active {
+    border-color: var(--danger-red) !important;
+    color: var(--danger-red) !important;
+    box-shadow: 0 0 10px var(--danger-glow) !important;
+}
+
+.btn-burn-active:hover {
+    background: var(--danger-red) !important;
+    color: var(--bg-color) !important;
+    text-shadow: none !important;
+}
+
 .hidden {
     display: none !important;
 }
