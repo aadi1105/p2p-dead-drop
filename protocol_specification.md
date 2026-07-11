@@ -121,6 +121,19 @@ Sent in response to a ping.
 * **`action`**: MUST be `"pong"`.
 * **`value`**: The identical timestamp received in the ping packet.
 
+#### Control Packet: Voice State Sync
+Sent to notify the remote peer of a local microphone activation or deactivation event.
+```json
+{
+  "type": "control",
+  "action": "voice-state",
+  "value": "active"
+}
+```
+* **`type`**: MUST be `"control"`.
+* **`action`**: MUST be `"voice-state"`.
+* **`value`**: MUST be `"active"` or `"inactive"`. Indicates whether the sender's microphone is actively capturing and streaming audio on the SRTP transceiver.
+
 ---
 
 ## 6. File Transfer Protocol (FTP) Lifecycle
