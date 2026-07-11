@@ -150,7 +150,7 @@ function initConnectionHandle() {
         onFileProgress: (percent, action) => {
             updateProgress(percent, action === 'sending' ? 'Uploading...' : 'Downloading...');
         },
-        onFileCompleted: (blob, filename, isDirectSave) => {
+        onFileCompleted: (blob, filename, isDirectSave, verified) => {
             synth.playSuccessSweep();
             document.getElementById('incomingFileModal').classList.add('hidden');
 
@@ -169,20 +169,20 @@ function initConnectionHandle() {
                     a.href = url;
                     a.download = filename;
                     a.click();
-                    updateProgress(100, 'Assembled & saved!');
+                    updateProgress(100, verified ? 'Verified & saved!' : 'CORRUPTED FILE SAVED!');
                 } else {
-                    updateProgress(100, 'Saved directly to disk!');
+                    updateProgress(100, verified ? 'Verified & saved directly!' : 'CHECKSUM VERIFICATION FAILED!');
                 }
             } else {
                 direction = 'sent';
                 size = p2p.sendingFile ? p2p.sendingFile.size : 0;
                 filesSentCount++;
                 totalBytesSent += size;
-                updateProgress(100, 'Sent successfully!');
+                updateProgress(100, 'Sent & verified!');
             }
             
             // Add file entry to the File Log
-            logFileTransfer(filename, size, direction, isDirectSave);
+            logFileTransfer(filename, size, direction, isDirectSave, verified);
 
             setTimeout(() => {
                 document.getElementById('progressCard').classList.add('hidden');
@@ -515,7 +515,7 @@ function updateProgress(percent, statusText) {
 }
 
 // Append file entry to the File Log
-function logFileTransfer(filename, size, direction, isDirectSave) {
+function logFileTransfer(filename, size, direction, isDirectSave, verified) {
     const list = document.getElementById('fileLogList');
     const container = document.getElementById('fileLogContainer');
     container.classList.remove('hidden');
@@ -525,8 +525,14 @@ function logFileTransfer(filename, size, direction, isDirectSave) {
     const directionLabel = direction === 'sent' ? 'TX' : 'RX';
     
     const item = document.createElement('div');
-    item.style.color = direction === 'sent' ? 'var(--term-green)' : '#a3ffa3';
-    item.innerText = `[${time}] ${directionLabel}: ${filename} (${formatBytes(size)}) - ${mode}`;
+    if (direction === 'received') {
+        const verifyLabel = verified ? ' [VERIFIED]' : ' [CORRUPT]';
+        item.style.color = verified ? '#a3ffa3' : 'var(--danger-red)';
+        item.innerText = `[${time}] ${directionLabel}: ${filename} (${formatBytes(size)}) - ${mode}${verifyLabel}`;
+    } else {
+        item.style.color = 'var(--term-green)';
+        item.innerText = `[${time}] ${directionLabel}: ${filename} (${formatBytes(size)}) - ${mode} [VERIFIED]`;
+    }
     
     list.appendChild(item);
     list.scrollTop = list.scrollHeight;

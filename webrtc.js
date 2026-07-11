@@ -4,6 +4,7 @@
  * chunked file streaming with flow control backpressure,
  * and P2P Voice Chat (VoIP) audio streaming.
  * Includes native Deflate compression for SDP tokens.
+ * Computes SHA-256 checksums concurrently during transmission.
  */
 
 // Native browser compression helpers to shrink SDP codes under Discord's 2000char limit
@@ -23,6 +24,125 @@ async function decompressToken(base64) {
     const stream = new Blob([bytes]).stream();
     const decompressedStream = stream.pipeThrough(new DecompressionStream('deflate'));
     return await new Response(decompressedStream).text();
+}
+
+/**
+ * Standard SHA-256 implementation in pure JS.
+ * Used for concurrent, block-by-block file hashing, preserving O(1) space complexity.
+ */
+class SHA256 {
+    constructor() {
+        this.h = new Uint32Array([
+            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+            0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+        ]);
+        this.k = new Uint32Array([
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+        ]);
+        this.buffer = new Uint8Array(64);
+        this.bufferLength = 0;
+        this.lengthLow = 0;
+        this.lengthHigh = 0;
+    }
+
+    update(data) {
+        const view = new Uint8Array(data);
+        for (let i = 0; i < view.length; i++) {
+            this.buffer[this.bufferLength++] = view[i];
+            
+            this.lengthLow += 8;
+            if (this.lengthLow >= 0x100000000) {
+                this.lengthLow = this.lengthLow % 0x100000000;
+                this.lengthHigh++;
+            }
+            
+            if (this.bufferLength === 64) {
+                this.compress(this.buffer);
+                this.bufferLength = 0;
+            }
+        }
+    }
+
+    compress(block) {
+        const w = new Uint32Array(64);
+        const words = new DataView(block.buffer, block.byteOffset, 64);
+        for (let i = 0; i < 16; i++) {
+            w[i] = words.getUint32(i * 4);
+        }
+        for (let i = 16; i < 64; i++) {
+            const s0 = (this.rotr(w[i - 15], 7) ^ this.rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3));
+            const s1 = (this.rotr(w[i - 2], 17) ^ this.rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10));
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) | 0;
+        }
+
+        let a = this.h[0] | 0;
+        let b = this.h[1] | 0;
+        let c = this.h[2] | 0;
+        let d = this.h[3] | 0;
+        let e = this.h[4] | 0;
+        let f = this.h[5] | 0;
+        let g = this.h[6] | 0;
+        let h_val = this.h[7] | 0;
+
+        for (let i = 0; i < 64; i++) {
+            const S1 = (this.rotr(e, 6) ^ this.rotr(e, 11) ^ this.rotr(e, 25));
+            const ch = (e & f) ^ (~e & g);
+            const temp1 = (h_val + S1 + ch + this.k[i] + w[i]) | 0;
+            const S0 = (this.rotr(a, 2) ^ this.rotr(a, 13) ^ this.rotr(a, 22));
+            const maj = (a & b) ^ (a & c) ^ (b & c);
+            const temp2 = (S0 + maj) | 0;
+
+            h_val = g;
+            g = f;
+            f = e;
+            e = (d + temp1) | 0;
+            d = c;
+            c = b;
+            b = a;
+            a = (temp1 + temp2) | 0;
+        }
+
+        this.h[0] = (this.h[0] + a) | 0;
+        this.h[1] = (this.h[1] + b) | 0;
+        this.h[2] = (this.h[2] + c) | 0;
+        this.h[3] = (this.h[3] + d) | 0;
+        this.h[4] = (this.h[4] + e) | 0;
+        this.h[5] = (this.h[5] + f) | 0;
+        this.h[6] = (this.h[6] + g) | 0;
+        this.h[7] = (this.h[7] + h_val) | 0;
+    }
+
+    rotr(val, bits) {
+        return (val >>> bits) | (val << (32 - bits));
+    }
+
+    digest() {
+        const padLen = (this.bufferLength < 56) ? (56 - this.bufferLength) : (120 - this.bufferLength);
+        const pad = new Uint8Array(padLen);
+        pad[0] = 0x80;
+        this.update(pad);
+
+        const lengthBytes = new Uint8Array(8);
+        const view = new DataView(lengthBytes.buffer);
+        view.setUint32(0, this.lengthHigh);
+        view.setUint32(4, this.lengthLow);
+        this.update(lengthBytes);
+
+        let result = '';
+        for (let i = 0; i < 8; i++) {
+            let hex = this.h[i].toString(16);
+            while (hex.length < 8) hex = '0' + hex;
+            result += hex;
+        }
+        return result;
+    }
 }
 
 class DeadDropConnection {
@@ -54,10 +174,12 @@ class DeadDropConnection {
         this.fileReader = new FileReader();
         this.sendingFile = null;
         this.sendOffset = 0;
+        this.sendHasher = null;
 
         this.receivedMetadata = null;
-        this.receivedChunks = [];
         this.receivedSize = 0;
+        this.receivedChunks = [];
+        this.recvHasher = null;
         this.fileWritableStream = null;
 
         // Audio state
@@ -219,24 +341,52 @@ class DeadDropConnection {
         channel.onmessage = async event => {
             const data = event.data;
 
+            // 1. String control and metadata messages
             if (typeof data === "string") {
                 try {
                     const packet = JSON.parse(data);
                     
                     if (packet.type === "file-metadata") {
+                        // Reset receiver hashing state
                         this.receivedMetadata = packet;
                         this.receivedSize = 0;
+                        this.recvHasher = new SHA256();
                         this.onFileIncoming(packet.name, packet.size);
                     } 
                     else if (packet.type === "file-ready") {
+                        // Initialize sender hashing state and start transmission
+                        this.sendHasher = new SHA256();
                         this.startFileStream();
+                    }
+                    else if (packet.type === "file-complete") {
+                        // End of transmission. Verify hash.
+                        const calculatedHash = this.recvHasher.digest();
+                        const verified = (calculatedHash === packet.sha256);
+
+                        if (this.fileWritableStream) {
+                            await this.fileWritableStream.close();
+                            this.fileWritableStream = null;
+                            this.onFileCompleted(null, this.receivedMetadata.name, true, verified);
+                        } else {
+                            const blob = new Blob(this.receivedChunks);
+                            this.onFileCompleted(blob, this.receivedMetadata.name, false, verified);
+                            this.receivedChunks = [];
+                        }
+                        this.receivedMetadata = null;
+                        this.recvHasher = null;
                     }
                 } catch (err) {
                     console.error("Error parsing file channel string:", err);
                 }
             } 
+            // 2. Binary file chunks
             else {
                 if (!this.receivedMetadata) return;
+
+                // Hash the chunk concurrently in memory
+                if (this.recvHasher) {
+                    this.recvHasher.update(data);
+                }
 
                 if (this.fileWritableStream) {
                     this.fileWritableStream.write(data);
@@ -247,19 +397,6 @@ class DeadDropConnection {
                 this.receivedSize += data.byteLength;
                 const percent = Math.floor((this.receivedSize / this.receivedMetadata.size) * 100);
                 this.onFileProgress(percent, 'receiving');
-
-                if (this.receivedSize === this.receivedMetadata.size) {
-                    if (this.fileWritableStream) {
-                        await this.fileWritableStream.close();
-                        this.fileWritableStream = null;
-                        this.onFileCompleted(null, this.receivedMetadata.name, true);
-                    } else {
-                        const blob = new Blob(this.receivedChunks);
-                        this.onFileCompleted(blob, this.receivedMetadata.name, false);
-                        this.receivedChunks = [];
-                    }
-                    this.receivedMetadata = null;
-                }
             }
         };
     }
@@ -336,17 +473,28 @@ class DeadDropConnection {
         this.fileChannel.bufferedAmountLowThreshold = 65536; // 64KB threshold
 
         this.fileReader.onload = event => {
-            this.fileChannel.send(event.target.result);
-            this.sendOffset += event.target.result.byteLength;
+            const arrayBuffer = event.target.result;
+            this.fileChannel.send(arrayBuffer);
+            
+            // Hash the chunk concurrently on read
+            if (this.sendHasher) {
+                this.sendHasher.update(arrayBuffer);
+            }
 
+            this.sendOffset += arrayBuffer.byteLength;
             const percent = Math.floor((this.sendOffset / this.sendingFile.size) * 100);
             this.onFileProgress(percent, 'sending');
 
             if (this.sendOffset < this.sendingFile.size) {
                 streamNext();
             } else {
-                this.onFileCompleted(null, this.sendingFile.name, false);
+                // Compute final sender hash and dispatch file-complete signal
+                const finalHash = this.sendHasher.digest();
+                this.fileChannel.send(JSON.stringify({ type: "file-complete", sha256: finalHash }));
+                
+                this.onFileCompleted(null, this.sendingFile.name, false, true);
                 this.sendingFile = null;
+                this.sendHasher = null;
             }
         };
 
