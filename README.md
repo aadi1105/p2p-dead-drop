@@ -10,9 +10,10 @@ By utilizing **WebRTC Data Channels and Media Transceivers**, DeadDrop bypasses 
 
 - **No Signaling Servers:** Handshakes are performed manually by copying and pasting compressed connection tokens.
 - **SDP Deflate Compression:** Shrinks SDP signaling tokens using the browser's native `CompressionStream` API (deflate algorithm), compressing tokens by **~60%** to comfortably fit within standard chat app limits (such as Discord's 2,000-character limit).
-- **Bilateral Voice Call (VoIP):** Real-time voice calls using microphone streams pre-configured through audio transceivers, enabling dynamic call toggling without renegotiating connection codes.
+- **Bilateral Voice Call (VoIP):** Real-time voice calls using microphone streams pre-configured through audio transceivers, enabling dynamic call toggling without renegotiating connection codes. Includes real-time voice call state synchronization (microphone active/mute states and warning logs).
 - **Auto-Syncing Burn Mode:** Self-destructing messages with a 10-second countdown. Toggling the mode synchronizes the state across both peers instantly and triggers warning synth ticks.
 - **CLI Command Shell:** Chat input acts as a mock Unix terminal shell. Commands include:
+  - `/net` - Queries `RTCPeerConnection` stats reports to show candidate types, RTT latency, bytes TX/RX, and packet loss.
   - `/ping` - Calculates real-time round-trip latency (RTT) between browsers.
   - `/status` - Displays link specifications, active state, and session statistics (bytes TX/RX).
   - `/voice` - Toggles the VoIP line.
