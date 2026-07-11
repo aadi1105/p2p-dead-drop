@@ -3,8 +3,8 @@
  * Handles serverless signaling (base64 tokens), dual data channels (chat/file),
  * chunked file streaming with flow control backpressure,
  * and P2P Voice Chat (VoIP) audio streaming.
- * Includes native Deflate compression for SDP tokens.
- * Computes SHA-256 checksums concurrently during transmission.
+ * 
+ * Refactored to extend EventTarget to decouple UI bindings from connection logic.
  */
 
 // Native browser compression helpers to shrink SDP codes under Discord's 2000char limit
@@ -145,8 +145,9 @@ class SHA256 {
     }
 }
 
-class DeadDropConnection {
-    constructor(config = {}) {
+class DeadDropConnection extends EventTarget {
+    constructor() {
+        super();
         this.rtcConfig = {
             iceServers: [
                 { urls: 'stun:stun.l.google.com:19302' },
@@ -158,16 +159,6 @@ class DeadDropConnection {
         this.chatChannel = null;
         this.fileChannel = null;
         this.isHost = false;
-
-        // Callback hooks for UI bindings
-        this.onStatusChange = config.onStatusChange || (() => {});
-        this.onIceGathered = config.onIceGathered || (() => {});
-        this.onMessageReceived = config.onMessageReceived || (() => {});
-        this.onControlEvent = config.onControlEvent || (() => {});
-        this.onFileIncoming = config.onFileIncoming || (() => {});
-        this.onFileProgress = config.onFileProgress || (() => {});
-        this.onFileCompleted = config.onFileCompleted || (() => {});
-        this.onRemoteStream = config.onRemoteStream || (() => {});
 
         // File transfer states
         this.chunkSize = 16384; // 16KB blocks
@@ -187,11 +178,18 @@ class DeadDropConnection {
     }
 
     /**
+     * Helper to dispatch connection events.
+     */
+    emit(eventName, detailData) {
+        this.dispatchEvent(new CustomEvent(eventName, { detail: detailData }));
+    }
+
+    /**
      * Initializes the WebRTC connection as the HOST.
      */
     async initHost() {
         this.isHost = true;
-        this.onStatusChange('Puncturing NAT...', 'connecting');
+        this.emit('statuschange', { text: 'Puncturing NAT...', type: 'connecting' });
 
         this.peerConnection = new RTCPeerConnection(this.rtcConfig);
 
@@ -211,7 +209,7 @@ class DeadDropConnection {
             await this.peerConnection.setLocalDescription(offer);
         } catch (err) {
             console.error("Failed to create offer:", err);
-            this.onStatusChange('Failed to host', 'disconnected');
+            this.emit('statuschange', { text: 'Failed to host', type: 'disconnected' });
         }
     }
 
@@ -220,7 +218,7 @@ class DeadDropConnection {
      */
     async initJoin() {
         this.isHost = false;
-        this.onStatusChange('Awaiting connection code', 'disconnected');
+        this.emit('statuschange', { text: 'Awaiting connection code', type: 'disconnected' });
 
         this.peerConnection = new RTCPeerConnection(this.rtcConfig);
 
@@ -251,7 +249,7 @@ class DeadDropConnection {
                 // Compress the generated local token using native Gzip/Deflate
                 const token = JSON.stringify(this.peerConnection.localDescription);
                 const compressedToken = await compressToken(token);
-                this.onIceGathered(compressedToken);
+                this.emit('icegathered', { token: compressedToken });
             }
         };
     }
@@ -262,7 +260,7 @@ class DeadDropConnection {
     bindTrackEvents() {
         this.peerConnection.ontrack = event => {
             const remoteStream = event.streams[0] || new MediaStream([event.track]);
-            this.onRemoteStream(remoteStream);
+            this.emit('remotestream', { stream: remoteStream });
         };
     }
 
@@ -273,14 +271,14 @@ class DeadDropConnection {
         try {
             const decompressed = await decompressToken(base64Offer);
             const sdp = JSON.parse(decompressed);
-            this.onStatusChange('Puncturing NAT...', 'connecting');
+            this.emit('statuschange', { text: 'Puncturing NAT...', type: 'connecting' });
 
             await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
             const answer = await this.peerConnection.createAnswer();
             await this.peerConnection.setLocalDescription(answer);
         } catch (err) {
             console.error("Error handling offer:", err);
-            this.onStatusChange('Error processing code', 'disconnected');
+            this.emit('statuschange', { text: 'Error processing code', type: 'disconnected' });
             throw err;
         }
     }
@@ -293,7 +291,7 @@ class DeadDropConnection {
             const decompressed = await decompressToken(base64Answer);
             const sdp = JSON.parse(decompressed);
             await this.peerConnection.setRemoteDescription(new RTCSessionDescription(sdp));
-            this.onStatusChange('Connecting...', 'connecting');
+            this.emit('statuschange', { text: 'Connecting...', type: 'connecting' });
         } catch (err) {
             console.error("Error handling answer:", err);
             throw err;
@@ -305,26 +303,26 @@ class DeadDropConnection {
      */
     bindChannelEvents(channel) {
         channel.onopen = () => {
-            this.onStatusChange('Connected', 'connected');
+            this.emit('statuschange', { text: 'Connected', type: 'connected' });
         };
 
         channel.onclose = () => {
-            this.onStatusChange('Disconnected', 'disconnected');
+            this.emit('statuschange', { text: 'Disconnected', type: 'disconnected' });
             this.closeConnection();
         };
 
         channel.onerror = err => {
             console.error("Data channel error:", err);
-            this.onStatusChange('Connection Error', 'disconnected');
+            this.emit('statuschange', { text: 'Connection Error', type: 'disconnected' });
         };
 
         channel.onmessage = event => {
             try {
                 const packet = JSON.parse(event.data);
                 if (packet.type === 'chat') {
-                    this.onMessageReceived(packet.text, 'received', !!packet.selfDestruct);
+                    this.emit('message', { text: packet.text, side: 'received', selfDestruct: !!packet.selfDestruct });
                 } else if (packet.type === 'control') {
-                    this.onControlEvent(packet);
+                    this.emit('control', packet);
                 }
             } catch (err) {
                 console.warn("Could not parse packet:", err);
@@ -347,29 +345,26 @@ class DeadDropConnection {
                     const packet = JSON.parse(data);
                     
                     if (packet.type === "file-metadata") {
-                        // Reset receiver hashing state
                         this.receivedMetadata = packet;
                         this.receivedSize = 0;
                         this.recvHasher = new SHA256();
-                        this.onFileIncoming(packet.name, packet.size);
+                        this.emit('fileincoming', { name: packet.name, size: packet.size });
                     } 
                     else if (packet.type === "file-ready") {
-                        // Initialize sender hashing state and start transmission
                         this.sendHasher = new SHA256();
                         this.startFileStream();
                     }
                     else if (packet.type === "file-complete") {
-                        // End of transmission. Verify hash.
                         const calculatedHash = this.recvHasher.digest();
                         const verified = (calculatedHash === packet.sha256);
 
                         if (this.fileWritableStream) {
                             await this.fileWritableStream.close();
                             this.fileWritableStream = null;
-                            this.onFileCompleted(null, this.receivedMetadata.name, true, verified);
+                            this.emit('filecompleted', { blob: null, filename: this.receivedMetadata.name, isDirectSave: true, verified: verified });
                         } else {
                             const blob = new Blob(this.receivedChunks);
-                            this.onFileCompleted(blob, this.receivedMetadata.name, false, verified);
+                            this.emit('filecompleted', { blob: blob, filename: this.receivedMetadata.name, isDirectSave: false, verified: verified });
                             this.receivedChunks = [];
                         }
                         this.receivedMetadata = null;
@@ -383,7 +378,6 @@ class DeadDropConnection {
             else {
                 if (!this.receivedMetadata) return;
 
-                // Hash the chunk concurrently in memory
                 if (this.recvHasher) {
                     this.recvHasher.update(data);
                 }
@@ -396,7 +390,7 @@ class DeadDropConnection {
 
                 this.receivedSize += data.byteLength;
                 const percent = Math.floor((this.receivedSize / this.receivedMetadata.size) * 100);
-                this.onFileProgress(percent, 'receiving');
+                this.emit('fileprogress', { percent: percent, action: 'receiving' });
             }
         };
     }
@@ -433,7 +427,7 @@ class DeadDropConnection {
         if (this.chatChannel && this.chatChannel.readyState === 'open') {
             const packet = { type: 'chat', text: text, selfDestruct: selfDestruct };
             this.chatChannel.send(JSON.stringify(packet));
-            this.onMessageReceived(text, 'sent', selfDestruct);
+            this.emit('message', { text: text, side: 'sent', selfDestruct: selfDestruct });
         }
     }
 
@@ -463,7 +457,7 @@ class DeadDropConnection {
             mime: file.type
         };
         this.fileChannel.send(JSON.stringify(meta));
-        this.onFileProgress(0, 'sending');
+        this.emit('fileprogress', { percent: 0, action: 'sending' });
     }
 
     /**
@@ -476,23 +470,21 @@ class DeadDropConnection {
             const arrayBuffer = event.target.result;
             this.fileChannel.send(arrayBuffer);
             
-            // Hash the chunk concurrently on read
             if (this.sendHasher) {
                 this.sendHasher.update(arrayBuffer);
             }
 
             this.sendOffset += arrayBuffer.byteLength;
             const percent = Math.floor((this.sendOffset / this.sendingFile.size) * 100);
-            this.onFileProgress(percent, 'sending');
+            this.emit('fileprogress', { percent: percent, action: 'sending' });
 
             if (this.sendOffset < this.sendingFile.size) {
                 streamNext();
             } else {
-                // Compute final sender hash and dispatch file-complete signal
                 const finalHash = this.sendHasher.digest();
                 this.fileChannel.send(JSON.stringify({ type: "file-complete", sha256: finalHash }));
                 
-                this.onFileCompleted(null, this.sendingFile.name, false, true);
+                this.emit('filecompleted', { blob: null, filename: this.sendingFile.name, isDirectSave: false, verified: true });
                 this.sendingFile = null;
                 this.sendHasher = null;
             }

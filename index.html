@@ -34,11 +34,11 @@
             <!-- SCREEN 1: Role Selection -->
             <div id="screenRole" class="screen active">
                 <div class="choice-grid">
-                    <div class="choice-btn" onclick="initHost()">
+                    <div class="choice-btn" id="btnHostChoice">
                         <div class="choice-title">[ Host Link ]</div>
                         <div class="choice-desc">Generate an encrypted connection code and wait for incoming handshake.</div>
                     </div>
-                    <div class="choice-btn" onclick="initJoin()">
+                    <div class="choice-btn" id="btnJoinChoice">
                         <div class="choice-title">[ Join Link ]</div>
                         <div class="choice-desc">Accept a host connection code and generate a remote handshake token.</div>
                     </div>
@@ -50,8 +50,8 @@
                 <div class="step-container">
                     <div class="section-title">1. Your Connection Code</div>
                     <div class="textarea-wrapper">
-                        <textarea id="hostOfferText" readonly onclick="this.select()"></textarea>
-                        <button class="copy-overlay-btn" onclick="copyToken('hostOfferText')">Copy</button>
+                        <textarea id="hostOfferText" readonly></textarea>
+                        <button class="copy-overlay-btn" id="btnHostCopyOffer">Copy</button>
                     </div>
                     <p class="choice-desc">Send this token to your peer. Listening for incoming signal...</p>
                 </div>
@@ -61,29 +61,29 @@
                     <div class="textarea-wrapper">
                         <textarea id="hostAnswerText" placeholder="Paste response token here..."></textarea>
                     </div>
-                    <button class="btn" id="connectBtn" onclick="hostConnect()" disabled>[ Establish Link ]</button>
+                    <button class="btn" id="connectBtn" disabled>[ Establish Link ]</button>
                 </div>
 
-                <button class="btn btn-secondary btn-sm back-btn" onclick="resetState()">[ Abort ]</button>
+                <button class="btn btn-secondary btn-sm back-btn" id="btnHostAbort">[ Abort ]</button>
             </div>
 
             <!-- SCREEN 3: Join Connection Setup -->
             <div id="screenJoin" class="screen">
                 <div class="step-container">
                     <div class="section-title">1. Paste Host Code</div>
-                    <textarea id="joinOfferText" placeholder="Paste host connection token here..." oninput="handleOfferInput()"></textarea>
+                    <textarea id="joinOfferText" placeholder="Paste host connection token here..."></textarea>
                 </div>
 
                 <div class="step-container hidden" id="joinResponseStep">
                     <div class="section-title">2. Your Response Code</div>
                     <div class="textarea-wrapper">
-                        <textarea id="joinAnswerText" readonly onclick="this.select()"></textarea>
-                        <button class="copy-overlay-btn" onclick="copyToken('joinAnswerText')">Copy</button>
+                        <textarea id="joinAnswerText" readonly></textarea>
+                        <button class="copy-overlay-btn" id="btnJoinCopyAnswer">Copy</button>
                     </div>
                     <p class="choice-desc">Send this response code back to the Host to complete the handshake.</p>
                 </div>
 
-                <button class="btn btn-secondary btn-sm back-btn" onclick="resetState()">[ Abort ]</button>
+                <button class="btn btn-secondary btn-sm back-btn" id="btnJoinAbort">[ Abort ]</button>
             </div>
 
             <!-- SCREEN 4: Active P2P Session Workspace -->
@@ -100,9 +100,9 @@
                             <div class="msg msg-system">Link established. Network traffic is end-to-end encrypted.</div>
                         </div>
                         <div class="chat-input-row">
-                            <button class="btn btn-sm btn-secondary" id="burnToggle" onclick="toggleBurnMode()">[ Burn: OFF ]</button>
-                            <input type="text" id="chatInput" placeholder="Enter message..." onkeypress="handleChatKeyPress(event)">
-                            <button class="btn btn-sm" onclick="sendChatMessage()">[ Send ]</button>
+                            <button class="btn btn-sm btn-secondary" id="burnToggle">[ Burn: OFF ]</button>
+                            <input type="text" id="chatInput" placeholder="Enter message...">
+                            <button class="btn btn-sm" id="btnSendChat">[ Send ]</button>
                         </div>
                     </div>
 
@@ -112,10 +112,10 @@
                             <span>File Stream Drop</span>
                         </div>
                         <div class="dropzone-container">
-                            <div class="dropzone" id="dropzone" onclick="triggerFileSelect()">
+                            <div class="dropzone" id="dropzone">
                                 <div class="dropzone-text">[ Place File Here ]</div>
                                 <div class="dropzone-subtext">Direct binary stream. Files are transferred directly to peer disk.</div>
-                                <input type="file" id="fileInput" class="hidden" onchange="handleFileSelected(event)">
+                                <input type="file" id="fileInput" class="hidden">
                             </div>
                             
                             <!-- Incoming File Prompt Modal -->
@@ -156,7 +156,7 @@
 
                             <!-- Audio Call controls -->
                             <div class="audio-ctrl-row">
-                                <button class="btn btn-sm" id="audioCallBtn" onclick="toggleAudioCall()">[ Start Voice Call ]</button>
+                                <button class="btn btn-sm" id="audioCallBtn">[ Start Voice Call ]</button>
                             </div>
                         </div>
                     </div>
