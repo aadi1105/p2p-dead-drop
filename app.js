@@ -269,6 +269,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function resetUI() {
         document.getElementById('chatPeerName').innerText = '[ Secure Link ]';
+        document.getElementById('customIceInput').value = '';
         document.getElementById('hostOfferText').value = '';
         document.getElementById('hostAnswerText').value = '';
         document.getElementById('joinOfferText').value = '';
@@ -321,6 +322,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ================================================================== //
     function initHost() {
         initConnectionHandle();
+        const customIce = document.getElementById('customIceInput').value.trim();
+        if (customIce) {
+            p2p.setCustomIce(customIce);
+        }
         p2p.initHost();
         showScreen('screenHost');
     }
@@ -338,6 +343,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ================================================================== //
     function initJoin() {
         initConnectionHandle();
+        const customIce = document.getElementById('customIceInput').value.trim();
+        if (customIce) {
+            p2p.setCustomIce(customIce);
+        }
         p2p.initJoin();
         showScreen('screenJoin');
     }
@@ -411,9 +420,41 @@ document.addEventListener('DOMContentLoaded', () => {
                 toggleAudioCall();
                 break;
                 
+            case 'net':
+                if (p2p) {
+                    appendChatMessage("[System: Fetching live RTCPeerConnection statistics...]", 'system');
+                    p2p.getDiagnosticStats().then(stats => {
+                        if (!stats) {
+                            appendChatMessage("[System Error: Stats report empty]", 'system');
+                            return;
+                        }
+                        const relayText = stats.isRelayed ? "RELAYED (TURN)" : "DIRECT (STUN/Host)";
+                        const rttText = stats.rtt !== null ? `${stats.rtt}ms` : "N/A";
+                        
+                        appendChatMessage(`[ Network Diagnostic Report ]`, 'system');
+                        appendChatMessage(`- ICE State: ${stats.iceConnectionState.toUpperCase()}`, 'system');
+                        appendChatMessage(`- Connection State: ${stats.connectionState.toUpperCase()}`, 'system');
+                        appendChatMessage(`- Tunnel Route: ${relayText}`, 'system');
+                        appendChatMessage(`- Active Protocol: ${stats.localProtocol.toUpperCase()}`, 'system');
+                        appendChatMessage(`- Local Candidate: [${stats.localType.toUpperCase()}] ${stats.localIp}:${stats.localPort}`, 'system');
+                        appendChatMessage(`- Remote Candidate: [${stats.remoteType.toUpperCase()}] ${stats.remoteIp}:${stats.remotePort}`, 'system');
+                        appendChatMessage(`- Transport RTT: ${rttText}`, 'system');
+                        appendChatMessage(`- Link Bytes TX/RX: ${formatBytes(stats.bytesSent)} / ${formatBytes(stats.bytesReceived)}`, 'system');
+                        if (stats.packetsLost > 0) {
+                            appendChatMessage(`- Packets Lost: ${stats.packetsLost}`, 'system');
+                        }
+                    }).catch(err => {
+                        appendChatMessage(`[System Error: ${err.message}]`, 'system');
+                    });
+                } else {
+                    appendChatMessage("[System Error: Connection link inactive]", 'system');
+                }
+                break;
+                
             case 'help':
             default:
                 appendChatMessage(`[ Console Commands ]`, 'system');
+                appendChatMessage(`/net    - Expose live WebRTC connection stats`, 'system');
                 appendChatMessage(`/ping   - Measure round-trip P2P latency`, 'system');
                 appendChatMessage(`/status - Display secure link metadata`, 'system');
                 appendChatMessage(`/voice  - Toggle VoIP microphone stream`, 'system');

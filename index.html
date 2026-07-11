@@ -43,6 +43,13 @@
                         <div class="choice-desc">Accept a host connection code and generate a remote handshake token.</div>
                     </div>
                 </div>
+
+                <!-- Custom ICE Server Input Box -->
+                <div class="step-container" style="margin-top: 25px; border-top: 1px dashed var(--term-green-dim); padding-top: 15px;">
+                    <div class="section-title" style="font-size: 0.75rem; color: var(--term-green);">[ Advanced: Custom ICE / TURN Server (Optional) ]</div>
+                    <input type="text" id="customIceInput" placeholder="stun:stun.l.google.com:19302 or turn:relay.example.com?u=user&p=pass" style="width: 100%; font-size: 0.7rem; background: rgba(0, 20, 0, 0.4); border: 1px solid var(--term-green-dim); color: var(--term-green); padding: 8px; font-family: monospace; box-sizing: border-box;">
+                    <p class="choice-desc" style="margin-top: 4px; font-size: 0.62rem; color: var(--term-green-dim);">Provide custom configurations for strict NAT traversal. Format: scheme:host:port?u=username&p=password</p>
+                </div>
             </div>
 
             <!-- SCREEN 2: Host Connection Setup -->

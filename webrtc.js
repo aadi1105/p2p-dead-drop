@@ -6,6 +6,7 @@
  * 
  * Refactored to extend EventTarget to decouple UI bindings from connection logic.
  * Derives a Short Authentication String (SAS) from DTLS certificate fingerprints.
+ * Includes network diagnostics (getDiagnosticStats) and custom ICE configuration.
  */
 
 // Native browser compression helpers to shrink SDP codes under Discord's 2000char limit
@@ -184,6 +185,89 @@ class DeadDropConnection extends EventTarget {
      */
     emit(eventName, detailData) {
         this.dispatchEvent(new CustomEvent(eventName, { detail: detailData }));
+    }
+
+    /**
+     * Prepend a custom STUN or TURN configuration parsed from a URL query format.
+     * Expects: scheme:host:port?u=username&p=password
+     */
+    setCustomIce(customString) {
+        try {
+            const urlPart = customString.split('?')[0];
+            const queryPart = customString.split('?')[1] || '';
+            const params = new URLSearchParams(queryPart);
+            
+            const serverObj = { urls: urlPart };
+            if (params.has('u')) serverObj.username = params.get('u');
+            if (params.has('p')) serverObj.credential = params.get('p');
+            
+            // Override/prepend custom ICE server config
+            this.rtcConfig.iceServers = [serverObj, ...this.rtcConfig.iceServers];
+        } catch (err) {
+            console.error("Invalid custom ICE server configuration:", err);
+        }
+    }
+
+    /**
+     * Queries the underlying RTCPeerConnection stats report and returns a parsed diagnostic.
+     */
+    async getDiagnosticStats() {
+        if (!this.peerConnection) return null;
+        try {
+            const stats = await this.peerConnection.getStats();
+            let activePair = null;
+            let localCandidate = null;
+            let remoteCandidate = null;
+            let rtt = null;
+            let bytesSent = 0;
+            let bytesReceived = 0;
+            let packetsLost = 0;
+            let packetsReceived = 0;
+
+            // Find succeeded active candidate pair
+            for (const report of stats.values()) {
+                if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                    activePair = report;
+                    rtt = report.currentRoundTripTime ? Math.round(report.currentRoundTripTime * 1000) : null;
+                    bytesSent = report.bytesSent || 0;
+                    bytesReceived = report.bytesReceived || 0;
+                }
+            }
+
+            if (activePair) {
+                localCandidate = stats.get(activePair.localCandidateId);
+                remoteCandidate = stats.get(activePair.remoteCandidateId);
+            }
+
+            // Scan for RTP packets and loss information
+            for (const report of stats.values()) {
+                if (report.type === 'inbound-rtp') {
+                    packetsReceived += report.packetsReceived || 0;
+                    packetsLost += report.packetsLost || 0;
+                }
+            }
+
+            return {
+                iceConnectionState: this.peerConnection.iceConnectionState,
+                connectionState: this.peerConnection.connectionState,
+                rtt,
+                bytesSent,
+                bytesReceived,
+                packetsLost,
+                localType: localCandidate ? localCandidate.candidateType : 'unknown',
+                localIp: localCandidate ? (localCandidate.ip || localCandidate.address) : 'unknown',
+                localPort: localCandidate ? localCandidate.port : 'unknown',
+                localProtocol: localCandidate ? localCandidate.protocol : 'unknown',
+                remoteType: remoteCandidate ? remoteCandidate.candidateType : 'unknown',
+                remoteIp: remoteCandidate ? (remoteCandidate.ip || remoteCandidate.address) : 'unknown',
+                remotePort: remoteCandidate ? remoteCandidate.port : 'unknown',
+                isRelayed: (localCandidate && localCandidate.candidateType === 'relay') || 
+                           (remoteCandidate && remoteCandidate.candidateType === 'relay')
+            };
+        } catch (err) {
+            console.error("Failed to query WebRTC stats:", err);
+            return null;
+        }
     }
 
     /**
