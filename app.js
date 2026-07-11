@@ -145,6 +145,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 const latency = Date.now() - packet.value;
                 synth.playMessage();
                 appendChatMessage(`>>> [System: Pong received. RTT latency: ${latency}ms]`, 'system');
+            } else if (packet.action === 'voice-state') {
+                const statusSpan = document.getElementById('remoteVoiceStatus');
+                if (statusSpan) {
+                    if (packet.value === 'active') {
+                        statusSpan.innerText = "[ Peer Mic: LIVE ]";
+                        statusSpan.style.color = "#a3ffa3";
+                        statusSpan.classList.add('pulsing');
+                        appendChatMessage("[System: Remote peer has opened their microphone stream]", 'system');
+                    } else {
+                        statusSpan.innerText = "[ Peer Mic: OFF ]";
+                        statusSpan.style.color = "var(--term-green-dim)";
+                        statusSpan.classList.remove('pulsing');
+                        appendChatMessage("[System: Remote peer has muted/disconnected their microphone]", 'system');
+                    }
+                }
             }
         });
 
@@ -284,6 +299,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const audioCallBtn = document.getElementById('audioCallBtn');
         if (audioCallBtn) {
             audioCallBtn.innerText = "[ Start Voice Call ]";
+        }
+        const statusSpan = document.getElementById('remoteVoiceStatus');
+        if (statusSpan) {
+            statusSpan.innerText = "[ Peer Mic: OFF ]";
+            statusSpan.style.color = "var(--term-green-dim)";
+            statusSpan.classList.remove('pulsing');
         }
         isAudioCalling = false;
         document.getElementById('remoteAudio').srcObject = null;
@@ -622,6 +643,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 isAudioCalling = true;
                 btn.innerText = "[ Disconnect Voice ]";
                 appendChatMessage("[System: Your microphone is now live on the connection]", 'system');
+                if (p2p) p2p.sendControl('voice-state', 'active');
             } catch (err) {
                 btn.innerText = "[ Start Voice Call ]";
                 alert("Could not access microphone: " + err.message);
@@ -631,6 +653,7 @@ document.addEventListener('DOMContentLoaded', () => {
             isAudioCalling = false;
             btn.innerText = "[ Start Voice Call ]";
             appendChatMessage("[System: Your microphone has been muted/disconnected]", 'system');
+            if (p2p) p2p.sendControl('voice-state', 'inactive');
         }
     }
 
