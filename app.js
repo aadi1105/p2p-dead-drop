@@ -221,6 +221,14 @@ document.addEventListener('DOMContentLoaded', () => {
             synth.playConnect();
             appendChatMessage("[System: Secure P2P voice channel opened]", 'system');
         });
+
+        // Listen for DTLS SAS key ready events
+        p2p.addEventListener('sasready', (e) => {
+            const { sas } = e.detail;
+            document.getElementById('chatPeerName').innerText = `[ Link Active | SAS: ${sas} ]`;
+            appendChatMessage(`[Security: DTLS Connection Established. SAS Code: ${sas}]`, 'system');
+            appendChatMessage(`[Verify SAS out-of-band (e.g. read aloud over voice) to ensure signaling integrity]`, 'system');
+        });
     }
 
     // UI Screen Routing
@@ -260,6 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function resetUI() {
+        document.getElementById('chatPeerName').innerText = '[ Secure Link ]';
         document.getElementById('hostOfferText').value = '';
         document.getElementById('hostAnswerText').value = '';
         document.getElementById('joinOfferText').value = '';

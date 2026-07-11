@@ -5,6 +5,7 @@
  * and P2P Voice Chat (VoIP) audio streaming.
  * 
  * Refactored to extend EventTarget to decouple UI bindings from connection logic.
+ * Derives a Short Authentication String (SAS) from DTLS certificate fingerprints.
  */
 
 // Native browser compression helpers to shrink SDP codes under Discord's 2000char limit
@@ -159,6 +160,7 @@ class DeadDropConnection extends EventTarget {
         this.chatChannel = null;
         this.fileChannel = null;
         this.isHost = false;
+        this.sasCode = null;
 
         // File transfer states
         this.chunkSize = 16384; // 16KB blocks
@@ -182,6 +184,43 @@ class DeadDropConnection extends EventTarget {
      */
     emit(eventName, detailData) {
         this.dispatchEvent(new CustomEvent(eventName, { detail: detailData }));
+    }
+
+    /**
+     * Parses SDP to extract the DTLS SHA-256 certificate fingerprint.
+     */
+    extractFingerprint(sdp) {
+        const match = sdp.match(/a=fingerprint:sha-256\s+([A-Fa-f0-9:]+)/i);
+        return match ? match[1].toLowerCase().replace(/:/g, '') : null;
+    }
+
+    /**
+     * Calculates the Short Authentication String (SAS) based on DTLS fingerprints.
+     */
+    async calculateSAS() {
+        try {
+            if (!this.peerConnection.localDescription || !this.peerConnection.remoteDescription) return;
+            
+            const localFP = this.extractFingerprint(this.peerConnection.localDescription.sdp);
+            const remoteFP = this.extractFingerprint(this.peerConnection.remoteDescription.sdp);
+            
+            if (localFP && remoteFP) {
+                // Lexicographically sort fingerprints to ensure order-independent outputs
+                const sorted = [localFP, remoteFP].sort();
+                const combined = sorted.join('|');
+                
+                const encoder = new TextEncoder();
+                const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(combined));
+                const hashArray = Array.from(new Uint8Array(hashBuffer));
+                const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                
+                // Format as XX-XX-XX
+                this.sasCode = `${hashHex.substring(0, 2)}-${hashHex.substring(2, 4)}-${hashHex.substring(4, 6)}`.toUpperCase();
+                this.emit('sasready', { sas: this.sasCode });
+            }
+        } catch (err) {
+            console.error("Failed to compute DTLS certificate SAS code:", err);
+        }
     }
 
     /**
@@ -302,8 +341,9 @@ class DeadDropConnection extends EventTarget {
      * Binds text chat events.
      */
     bindChannelEvents(channel) {
-        channel.onopen = () => {
+        channel.onopen = async () => {
             this.emit('statuschange', { text: 'Connected', type: 'connected' });
+            await this.calculateSAS();
         };
 
         channel.onclose = () => {
@@ -554,6 +594,7 @@ class DeadDropConnection extends EventTarget {
         this.peerConnection = null;
         this.chatChannel = null;
         this.fileChannel = null;
+        this.sasCode = null;
         if (this.fileWritableStream) {
             this.fileWritableStream.close().catch(() => {});
         }
