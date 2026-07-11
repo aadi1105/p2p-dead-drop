@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeadDrop P2P - Loopback Benchmarking Framework</title>
+    
+    <link rel="stylesheet" href="../style.css">
+    <style>
+        .benchmark-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        @media (max-width: 768px) {
+            .benchmark-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .metric-card {
+            background-color: var(--term-bg-dark);
+            border: 1px solid var(--term-green-dim);
+            border-radius: 4px;
+            padding: 15px;
+            box-shadow: var(--shadow-glow);
+        }
+        .metric-card h2 {
+            font-size: 0.9rem;
+            margin-top: 0;
+            color: var(--term-green);
+            border-bottom: 1px dashed var(--term-green-dim);
+            padding-bottom: 8px;
+            text-transform: uppercase;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.75rem;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid var(--term-green-dim);
+            padding: 6px 10px;
+            text-align: left;
+        }
+        th {
+            background-color: rgba(0, 255, 0, 0.05);
+            color: var(--term-green);
+        }
+        .log-console {
+            background-color: #050b05;
+            border: 1px solid var(--term-green-dim);
+            border-radius: 4px;
+            padding: 10px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.7rem;
+            color: #88ff88;
+            height: 250px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .btn-run {
+            width: 100%;
+            margin-top: 15px;
+            font-size: 0.95rem;
+            padding: 12px;
+            animation: pulse-border 2s infinite;
+        }
+        @keyframes pulse-border {
+            0% { border-color: var(--term-green-dim); }
+            50% { border-color: var(--term-green); }
+            100% { border-color: var(--term-green-dim); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="wrapper">
+        <div class="terminal-card" style="max-width: 900px;">
+            
+            <header>
+                <h1>DeadDrop P2P Benchmarking</h1>
+                <p>Automated Loopback Performance & Memory Analysis Framework</p>
+            </header>
+
+            <!-- Test Environment Config -->
+            <div class="metric-card" style="margin-bottom: 20px;">
+                <h2>1. Test Environment Metadata</h2>
+                <div style="font-size: 0.75rem; line-height: 1.6;">
+                    <div><strong>Host OS:</strong> <span id="envOS">Loading...</span></div>
+                    <div><strong>Browser Agent:</strong> <span id="envBrowser">Loading...</span></div>
+                    <div><strong>WebRTC Protocol:</strong> Loopback P2P (SCTP Data Channel over UDP)</div>
+                    <div><strong>Test Conditions:</strong> In-process loopback (isolated CPU/Memory context)</div>
+                </div>
+            </div>
+
+            <div class="benchmark-grid">
+                
+                <!-- Left Column: Controls and Log -->
+                <div style="display: flex; flex-direction: column; gap: 20px;">
+                    <div class="metric-card">
+                        <h2>Suite Diagnostics</h2>
+                        <div class="log-console" id="logOutput">Ready to run benchmarks. Click the button below to initialize the automated loopback link and execute the suite.</div>
+                        <button class="btn btn-run" id="btnStartBenchmark">[ RUN LOOPBACK BENCHMARKS ]</button>
+                    </div>
+                </div>
+
+                <!-- Right Column: Results & Analytics -->
+                <div style="display: flex; flex-direction: column; gap: 20px;">
+                    
+                    <!-- Throughput Table -->
+                    <div class="metric-card">
+                        <h2>Throughput & Chunk Size Comparison</h2>
+                        <p style="font-size: 0.65rem; color: var(--term-green-dim); margin-top: -5px;">Testing payload: 20 MB mock file transfer</p>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Chunk Size</th>
+                                    <th>Elapsed Time</th>
+                                    <th>Throughput</th>
+                                    <th>Heap Growth</th>
+                                </tr>
+                            </thead>
+                            <tbody id="throughputBody">
+                                <tr><td colspan="4" style="text-align: center; color: var(--term-green-dim);">Run benchmarks to populate data</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- SDP Metrics -->
+                    <div class="metric-card">
+                        <h2>SDP compression Analytics</h2>
+                        <table style="margin-top: 5px;">
+                            <tbody>
+                                <tr>
+                                    <td><strong>Raw Session Description Size</strong></td>
+                                    <td id="sdpRaw">0 Bytes</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Deflated Base64 Token Size</strong></td>
+                                    <td id="sdpCompressed">0 Bytes</td>
+                                </tr>
+                                <tr>
+                                    <td><strong>Compression Efficiency</strong></td>
+                                    <td id="sdpRatio">0.0%</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Latency Metrics -->
+                    <div class="metric-card">
+                        <h2>RTT Latency Metrics</h2>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 10px; text-align: center; font-size: 0.75rem;">
+                            <div style="border: 1px dashed var(--term-green-dim); padding: 8px;">
+                                <div>Min RTT</div>
+                                <strong id="rttMin" style="color: var(--term-green); font-size: 1rem;">-</strong>
+                            </div>
+                            <div style="border: 1px dashed var(--term-green-dim); padding: 8px;">
+                                <div>Max RTT</div>
+                                <strong id="rttMax" style="color: var(--term-green); font-size: 1rem;">-</strong>
+                            </div>
+                            <div style="border: 1px dashed var(--term-green-dim); padding: 8px;">
+                                <div>Avg RTT</div>
+                                <strong id="rttAvg" style="color: var(--term-green); font-size: 1rem;">-</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="metric-card" style="margin-top: 20px;">
+                <h2>Why 16KB is the Chosen Default</h2>
+                <p style="font-size: 0.72rem; line-height: 1.5; text-align: justify; margin: 5px 0 0 0;">
+                    Although modern browsers support WebRTC messages up to 64KB or 256KB, the WebRTC SCTP layer implements message bundling and fragmentation. Sending blocks larger than <strong>16KB</strong> can exhaust the browser's SCTP buffer queue on slower lines, causing head-of-line blocking or triggering congestion control window drops that cause throughput collapse. Under FIPS/standards-conforming WebRTC, a 16KB chunk size is the maximum safe block size that avoids application-level fragment collisions while maximizing stability across mobile and desktop clients.
+                </p>
+            </div>
+
+            <div style="margin-top: 20px; display: flex; justify-content: space-between;">
+                <a href="../index.html" class="btn btn-secondary btn-sm">[ Back to deadDrop ]</a>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Hidden audio element for receiving peer voice stream -->
+    <audio id="remoteAudio" autoplay></audio>
+
+    <!-- Import webrtc engine from parent path -->
+    <script src="../webrtc.js?v=3" defer></script>
+    <script src="benchmark.js" defer></script>
+</body>
+</html>
